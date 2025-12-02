@@ -30,7 +30,7 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
         private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
     }
 
-    data class Settings(var enabled: Boolean = true)
+    data class Settings(var enabled: Boolean = false)
 
     override val key: SettingsKey<Settings> = SettingsKey("transloco.inlay.hints")
     override val name: String = "Transloco Translations"
@@ -52,9 +52,9 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
     ): InlayHintsCollector? {
         if (!file.name.lowercase().endsWith(".html")) return null
 
-        // Check the toggle service state
+        // Only show hints when toggle is ON (controlled by Ctrl+Alt+T)
         val toggleService = TranslocoTranslationToggleService.getInstance(file.project)
-        if (!toggleService.showTranslations && !settings.enabled) return null
+        if (!toggleService.showTranslations) return null
 
         return TranslocoInlayHintsCollector(editor, file)
     }

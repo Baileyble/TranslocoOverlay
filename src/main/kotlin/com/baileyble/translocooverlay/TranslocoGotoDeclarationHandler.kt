@@ -22,6 +22,13 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         private val DIRECT_ATTR_PATTERN = Regex("""(?<!\[)transloco\s*=\s*["']([^"']+)["']""")
         private val BINDING_ATTR_PATTERN = Regex("""\[transloco]\s*=\s*["']['"]?([^"']+)['"]?["']""")
 
+        // t() function call pattern: t('key') or t("key")
+        private val T_FUNCTION_PATTERN = Regex("""t\s*\(\s*['"]([^'"]+)['"]\s*[,)]""")
+
+        // Structural directive patterns
+        private val STRUCTURAL_DIRECTIVE_PATTERN = Regex("""\*transloco\s*=\s*["']([^"']+)["']""")
+        private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
+
         // Patterns to EXCLUDE (form controls, etc.)
         private val EXCLUDE_PATTERNS = listOf(
             Regex("""\.get\s*\(\s*['"]"""),           // .get('something')
@@ -55,11 +62,38 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
         // Check if this is a form control or other excluded pattern
         if (shouldExclude(immediateContext)) {
-            LOG.warn("TRANSLOCO-GOTO: Excluded pattern detected, skipping")
             return null
         }
 
-        // Get the transloco context by looking for 'transloco' keyword
+        // First, try to detect t() function call pattern
+        val tFunctionKey = extractTFunctionKey(sourceElement)
+        if (tFunctionKey != null) {
+            LOG.warn("TRANSLOCO-GOTO: Detected t() function call")
+            LOG.warn("TRANSLOCO-GOTO: Key from t(): '$tFunctionKey'")
+
+            // Look for scope from *transloco directive
+            val scope = findTranslocoScope(sourceElement)
+            val fullKey = if (scope != null) "$scope.$tFunctionKey" else tFunctionKey
+
+            LOG.warn("TRANSLOCO-GOTO: Scope: $scope, Full key: '$fullKey'")
+
+            val targets = findTranslationTargets(sourceElement, fullKey)
+
+            // If no results with scope, try without scope
+            if (targets.isEmpty() && scope != null) {
+                LOG.warn("TRANSLOCO-GOTO: No results with scope, trying without")
+                val targetsNoScope = findTranslationTargets(sourceElement, tFunctionKey)
+                if (targetsNoScope.isNotEmpty()) {
+                    return targetsNoScope.toTypedArray()
+                }
+            }
+
+            if (targets.isNotEmpty()) {
+                return targets.toTypedArray()
+            }
+        }
+
+        // Fall back to transloco context detection (pipe, directive attribute)
         val context = getTranslocoContext(sourceElement)
 
         if (context == null) {
@@ -67,10 +101,10 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         }
 
         LOG.warn("TRANSLOCO-GOTO: Ctrl+Click in ${file.name}")
-        LOG.warn("TRANSLOCO-GOTO: Context: '${context.take(100)}'")
+        LOG.warn("TRANSLOCO-GOTO: Context: '${context.take(150)}'")
 
         // Extract the key from the context
-        val key = extractKeyFromContext(context)
+        val key = extractKeyFromContext(context, sourceElement)
         LOG.warn("TRANSLOCO-GOTO: Extracted key: $key")
 
         if (key == null) {
@@ -91,13 +125,68 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
     }
 
     /**
+     * Extract key from t('key') function call.
+     */
+    private fun extractTFunctionKey(element: PsiElement): String? {
+        var current: PsiElement? = element
+        var depth = 0
+
+        while (current != null && depth < 5) {
+            val text = current.text ?: ""
+
+            // Check for t('key') pattern
+            val match = T_FUNCTION_PATTERN.find(text)
+            if (match != null) {
+                return match.groupValues[1]
+            }
+
+            current = current.parent
+            depth++
+        }
+
+        return null
+    }
+
+    /**
+     * Find the scope from *transloco="let t; read: 'scope'" directive.
+     */
+    private fun findTranslocoScope(element: PsiElement): String? {
+        var current: PsiElement? = element
+        var depth = 0
+
+        while (current != null && depth < 20) {
+            val text = current.text ?: ""
+
+            // Look for *transloco directive
+            if (text.contains("*transloco")) {
+                val directiveMatch = STRUCTURAL_DIRECTIVE_PATTERN.find(text)
+                if (directiveMatch != null) {
+                    val directiveContent = directiveMatch.groupValues[1]
+
+                    // Extract read: 'scope' from directive content
+                    val scopeMatch = READ_SCOPE_PATTERN.find(directiveContent)
+                    if (scopeMatch != null) {
+                        return scopeMatch.groupValues[1]
+                    }
+                }
+                // Found *transloco but no read scope
+                return null
+            }
+
+            current = current.parent
+            depth++
+        }
+
+        return null
+    }
+
+    /**
      * Get immediate context around the element (for exclusion checks).
      */
     private fun getImmediateContext(element: PsiElement): String {
         val sb = StringBuilder()
         var current: PsiElement? = element
 
-        // Go up 3 levels to get enough context
         repeat(3) {
             current?.text?.let { sb.append(it).append(" ") }
             current = current?.parent
@@ -120,7 +209,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         var current: PsiElement? = element
         var depth = 0
 
-        while (current != null && depth < 10) {
+        while (current != null && depth < 15) {
             val text = current.text ?: ""
 
             // Check if this element contains transloco
@@ -139,12 +228,16 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
      * Check if the clicked element is part of the key.
      */
     private fun isClickedOnKey(element: PsiElement, key: String): Boolean {
+        // For scoped keys, also check just the last part
+        val keyParts = key.split(".")
+        val lastPart = keyParts.lastOrNull() ?: key
+
         var current: PsiElement? = element
         var depth = 0
 
         while (current != null && depth < 5) {
             val text = current.text ?: ""
-            if (text.contains(key)) {
+            if (text.contains(key) || text.contains(lastPart)) {
                 return true
             }
             current = current.parent
@@ -157,8 +250,15 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
     /**
      * Extract the translation key from the context.
      */
-    private fun extractKeyFromContext(context: String): String? {
-        // Try pipe syntax first: 'key' | transloco
+    private fun extractKeyFromContext(context: String, element: PsiElement): String? {
+        // Try t() function first
+        T_FUNCTION_PATTERN.find(context)?.let { match ->
+            val key = match.groupValues[1]
+            val scope = findTranslocoScope(element)
+            return if (scope != null) "$scope.$key" else key
+        }
+
+        // Try pipe syntax: 'key' | transloco
         PIPE_PATTERN.find(context)?.let {
             return it.groupValues[1]
         }
@@ -183,20 +283,18 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         val project = element.project
         val translationFiles = TranslationFileFinder.findTranslationFiles(project)
 
-        LOG.warn("TRANSLOCO-GOTO: Searching in ${translationFiles.size} translation files")
+        LOG.warn("TRANSLOCO-GOTO: Searching for '$key' in ${translationFiles.size} files")
 
         val targets = mutableListOf<PsiElement>()
 
         for (file in translationFiles) {
             val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
-            if (psiFile == null) {
-                continue
-            }
+                ?: continue
 
             val navResult = JsonKeyNavigator.navigateToKey(psiFile, key)
 
             if (navResult.found && navResult.property != null) {
-                LOG.warn("TRANSLOCO-GOTO: Found key '$key' in ${file.name}")
+                LOG.warn("TRANSLOCO-GOTO: Found '$key' in ${file.name}")
                 targets.add(navResult.property)
             }
         }

@@ -18,8 +18,8 @@ repositories {
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     intellijPlatform {
-        // Target WebStorm 2025.1 (closest available version)
-        create("WS", "2025.1")
+        // Target WebStorm 2024.3 (available in repositories)
+        create("WS", "2024.3")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // JavaScript/Angular support is bundled in WebStorm
@@ -30,7 +30,8 @@ dependencies {
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "251"
+            sinceBuild = "243"
+            untilBuild = provider { null }  // No upper limit - works on newer versions too
         }
 
         changeNotes = """

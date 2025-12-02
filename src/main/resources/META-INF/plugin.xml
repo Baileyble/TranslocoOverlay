@@ -28,7 +28,12 @@
     <depends>JavaScript</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Reference contributor for Ctrl+Click navigation -->
+        <!-- Goto declaration handler for Ctrl+Click navigation -->
+        <gotoDeclarationHandler
+                implementation="com.baileyble.translocooverlay.TranslocoGotoDeclarationHandler"
+                order="first"/>
+
+        <!-- Reference contributor for references -->
         <psi.referenceContributor
                 implementation="com.baileyble.translocooverlay.TranslocoReferenceContributor"/>
 

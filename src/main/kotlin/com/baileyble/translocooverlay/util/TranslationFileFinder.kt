@@ -23,6 +23,15 @@ object TranslationFileFinder {
         "src/i18n"
     )
 
+    // Paths to exclude from search
+    private val EXCLUDED_PATHS = listOf(
+        "node_modules",
+        ".git",
+        "dist",
+        "build",
+        ".angular"
+    )
+
     // Common language file names
     private val COMMON_LANG_FILES = listOf(
         "en.json", "es.json", "fr.json", "de.json", "it.json",
@@ -86,6 +95,13 @@ object TranslationFileFinder {
 
         // Must be a JSON file
         if (file.extension?.lowercase() != "json") {
+            return false
+        }
+
+        // Exclude files in node_modules, dist, etc.
+        if (EXCLUDED_PATHS.any { excluded ->
+            path.contains("/$excluded/") || path.contains("\\$excluded\\")
+        }) {
             return false
         }
 

@@ -29,12 +29,13 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <!-- Reference contributor for Ctrl+Click navigation -->
-        <!-- <psi.referenceContributor implementation="com.baileyble.translocooverlay.TranslocoReferenceContributor"/> -->
+        <psi.referenceContributor
+                implementation="com.baileyble.translocooverlay.TranslocoReferenceContributor"/>
 
-        <!-- Documentation provider for hover tooltips -->
+        <!-- Documentation provider for hover tooltips (Phase 4) -->
         <!-- <documentationProvider implementation="com.baileyble.translocooverlay.TranslocoDocumentationProvider"/> -->
 
-        <!-- Completion contributor for autocomplete -->
+        <!-- Completion contributor for autocomplete (Phase 5) -->
         <!-- <completion.contributor language="HTML" implementationClass="com.baileyble.translocooverlay.TranslocoCompletionContributor"/> -->
     </extensions>
 </idea-plugin>

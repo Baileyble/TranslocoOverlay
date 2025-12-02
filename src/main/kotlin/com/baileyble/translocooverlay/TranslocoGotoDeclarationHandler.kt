@@ -11,18 +11,28 @@ import com.intellij.psi.PsiManager
 
 /**
  * Handles Ctrl+Click navigation for Transloco translation keys.
- *
- * This is called when the user Ctrl+Clicks on any element in the editor.
- * We check if it's a transloco key and navigate to the JSON definition.
  */
 class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
     companion object {
         private val LOG = Logger.getInstance(TranslocoGotoDeclarationHandler::class.java)
 
+        // Patterns for extracting transloco keys
         private val PIPE_PATTERN = Regex("""['"]([^'"]+)['"]\s*\|\s*transloco""")
-        private val DIRECT_ATTR_PATTERN = Regex("""transloco\s*=\s*["']([^"']+)["']""")
-        private val BINDING_ATTR_PATTERN = Regex("""\[transloco]\s*=\s*["']'([^']+)'["']""")
+        private val DIRECT_ATTR_PATTERN = Regex("""(?<!\[)transloco\s*=\s*["']([^"']+)["']""")
+        private val BINDING_ATTR_PATTERN = Regex("""\[transloco]\s*=\s*["']['"]?([^"']+)['"]?["']""")
+
+        // Patterns to EXCLUDE (form controls, etc.)
+        private val EXCLUDE_PATTERNS = listOf(
+            Regex("""\.get\s*\(\s*['"]"""),           // .get('something')
+            Regex("""\.controls\s*\[\s*['"]"""),      // .controls['something']
+            Regex("""\.value\s*\.\s*"""),             // .value.something
+            Regex("""formControlName\s*=\s*['"]"""),  // formControlName="something"
+            Regex("""formGroupName\s*=\s*['"]"""),    // formGroupName="something"
+            Regex("""formArrayName\s*=\s*['"]"""),    // formArrayName="something"
+            Regex("""\[formControl]\s*="""),          // [formControl]="something"
+            Regex("""\[formGroup]\s*="""),            // [formGroup]="something"
+        )
     }
 
     override fun getGotoDeclarationTargets(
@@ -40,17 +50,24 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             return null
         }
 
-        LOG.warn("TRANSLOCO-GOTO: Ctrl+Click detected in ${file.name}")
-        LOG.warn("TRANSLOCO-GOTO: Element type: ${sourceElement.javaClass.simpleName}")
-        LOG.warn("TRANSLOCO-GOTO: Element text: '${sourceElement.text?.take(50)}'")
+        // Get immediate context to check for exclusions
+        val immediateContext = getImmediateContext(sourceElement)
 
-        // Get the context around the clicked element
+        // Check if this is a form control or other excluded pattern
+        if (shouldExclude(immediateContext)) {
+            LOG.warn("TRANSLOCO-GOTO: Excluded pattern detected, skipping")
+            return null
+        }
+
+        // Get the transloco context by looking for 'transloco' keyword
         val context = getTranslocoContext(sourceElement)
-        LOG.warn("TRANSLOCO-GOTO: Context: '${context?.take(100)}'")
 
         if (context == null) {
             return null
         }
+
+        LOG.warn("TRANSLOCO-GOTO: Ctrl+Click in ${file.name}")
+        LOG.warn("TRANSLOCO-GOTO: Context: '${context.take(100)}'")
 
         // Extract the key from the context
         val key = extractKeyFromContext(context)
@@ -61,8 +78,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         }
 
         // Check if the clicked position is on the key
-        val elementText = sourceElement.text ?: ""
-        if (!elementText.contains(key) && !isClickedOnKey(sourceElement, key)) {
+        if (!isClickedOnKey(sourceElement, key)) {
             LOG.warn("TRANSLOCO-GOTO: Click not on key, ignoring")
             return null
         }
@@ -72,6 +88,29 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         LOG.warn("TRANSLOCO-GOTO: Found ${targets.size} targets")
 
         return if (targets.isNotEmpty()) targets.toTypedArray() else null
+    }
+
+    /**
+     * Get immediate context around the element (for exclusion checks).
+     */
+    private fun getImmediateContext(element: PsiElement): String {
+        val sb = StringBuilder()
+        var current: PsiElement? = element
+
+        // Go up 3 levels to get enough context
+        repeat(3) {
+            current?.text?.let { sb.append(it).append(" ") }
+            current = current?.parent
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * Check if this context should be excluded (form controls, etc.).
+     */
+    private fun shouldExclude(context: String): Boolean {
+        return EXCLUDE_PATTERNS.any { it.containsMatchIn(context) }
     }
 
     /**
@@ -124,13 +163,13 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             return it.groupValues[1]
         }
 
-        // Try direct attribute: transloco="key"
-        DIRECT_ATTR_PATTERN.find(context)?.let {
-            return it.groupValues[1]
+        // Try binding: [transloco]="'key'" or [transloco]="key"
+        BINDING_ATTR_PATTERN.find(context)?.let {
+            return it.groupValues[1].trim('\'', '"')
         }
 
-        // Try binding: [transloco]="'key'"
-        BINDING_ATTR_PATTERN.find(context)?.let {
+        // Try direct attribute: transloco="key"
+        DIRECT_ATTR_PATTERN.find(context)?.let {
             return it.groupValues[1]
         }
 
@@ -145,23 +184,19 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         val translationFiles = TranslationFileFinder.findTranslationFiles(project)
 
         LOG.warn("TRANSLOCO-GOTO: Searching in ${translationFiles.size} translation files")
-        translationFiles.forEach {
-            LOG.warn("TRANSLOCO-GOTO: File: ${it.path}")
-        }
 
         val targets = mutableListOf<PsiElement>()
 
         for (file in translationFiles) {
             val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
             if (psiFile == null) {
-                LOG.warn("TRANSLOCO-GOTO: Could not open ${file.path} as JsonFile")
                 continue
             }
 
             val navResult = JsonKeyNavigator.navigateToKey(psiFile, key)
-            LOG.warn("TRANSLOCO-GOTO: Key '$key' in ${file.name}: found=${navResult.found}")
 
             if (navResult.found && navResult.property != null) {
+                LOG.warn("TRANSLOCO-GOTO: Found key '$key' in ${file.name}")
                 targets.add(navResult.property)
             }
         }

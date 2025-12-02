@@ -37,8 +37,8 @@
         <psi.referenceContributor
                 implementation="com.baileyble.translocooverlay.TranslocoReferenceContributor"/>
 
-        <!-- Documentation provider for hover tooltips (Phase 4) -->
-        <!-- <documentationProvider implementation="com.baileyble.translocooverlay.TranslocoDocumentationProvider"/> -->
+        <!-- Documentation provider for hover tooltips -->
+        <documentationProvider implementation="com.baileyble.translocooverlay.TranslocoDocumentationProvider"/>
 
         <!-- Completion contributor for autocomplete (Phase 5) -->
         <!-- <completion.contributor language="HTML" implementationClass="com.baileyble.translocooverlay.TranslocoCompletionContributor"/> -->

@@ -44,5 +44,12 @@
         <completion.contributor
                 language="any"
                 implementationClass="com.baileyble.translocooverlay.TranslocoCompletionContributor"/>
+
+        <!-- Intention action for inline editing (Alt+Enter) -->
+        <intentionAction>
+            <language>any</language>
+            <className>com.baileyble.translocooverlay.TranslocoEditAction</className>
+            <category>Transloco</category>
+        </intentionAction>
     </extensions>
 </idea-plugin>

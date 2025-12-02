@@ -9,14 +9,6 @@ import com.intellij.psi.*
 
 /**
  * PSI Reference for Transloco translation keys.
- *
- * This reference links a translation key usage in a template
- * to its definition in a JSON translation file.
- *
- * Provides:
- * - Ctrl+Click navigation to JSON definition
- * - Rename refactoring support
- * - Find usages support
  */
 class TranslocoKeyReference(
     element: PsiElement,
@@ -29,21 +21,23 @@ class TranslocoKeyReference(
     }
 
     init {
-        LOG.info("TranslocoKeyReference: Created reference for key '$key' in element ${element.javaClass.simpleName}")
+        LOG.warn("TRANSLOCO-REF: Created reference for key '$key'")
     }
 
-    /**
-     * Resolve to multiple targets (one per language file).
-     */
     override fun multiResolve(incompleteCode: Boolean): Array<ResolveResult> {
-        LOG.info("TranslocoKeyReference: multiResolve called for key '$key'")
+        LOG.warn("TRANSLOCO-REF: multiResolve() called for key '$key'")
 
         val project = element.project
         val translationFiles = TranslationFileFinder.findTranslationFiles(project)
 
-        LOG.info("TranslocoKeyReference: Found ${translationFiles.size} translation files")
+        LOG.warn("TRANSLOCO-REF: Found ${translationFiles.size} translation files")
         translationFiles.forEach { file ->
-            LOG.info("TranslocoKeyReference: Translation file: ${file.path}")
+            LOG.warn("TRANSLOCO-REF: Translation file: ${file.path}")
+        }
+
+        if (translationFiles.isEmpty()) {
+            LOG.warn("TRANSLOCO-REF: NO TRANSLATION FILES FOUND! Check your i18n directory structure.")
+            return ResolveResult.EMPTY_ARRAY
         }
 
         val results = mutableListOf<ResolveResult>()
@@ -51,57 +45,46 @@ class TranslocoKeyReference(
         for (file in translationFiles) {
             val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
             if (psiFile == null) {
-                LOG.warn("TranslocoKeyReference: Could not open ${file.path} as JsonFile")
+                LOG.warn("TRANSLOCO-REF: Could not open ${file.path} as JsonFile")
                 continue
             }
 
             val navResult = JsonKeyNavigator.navigateToKey(psiFile, key)
-            LOG.info("TranslocoKeyReference: Navigation result for '$key' in ${file.name}: found=${navResult.found}, value=${navResult.stringValue}")
+            LOG.warn("TRANSLOCO-REF: Key '$key' in ${file.name}: found=${navResult.found}, value=${navResult.stringValue}")
 
             if (navResult.found && navResult.property != null) {
                 results.add(PsiElementResolveResult(navResult.property))
+                LOG.warn("TRANSLOCO-REF: Added resolve result for ${file.name}")
             }
         }
 
-        LOG.info("TranslocoKeyReference: Resolved to ${results.size} targets")
+        LOG.warn("TRANSLOCO-REF: Resolved to ${results.size} targets")
         return results.toTypedArray()
     }
 
-    /**
-     * Resolve to a single target (primary language file).
-     */
     override fun resolve(): PsiElement? {
-        LOG.info("TranslocoKeyReference: resolve() called for key '$key'")
+        LOG.warn("TRANSLOCO-REF: resolve() called for key '$key'")
         val results = multiResolve(false)
         val result = results.firstOrNull()?.element
-        LOG.info("TranslocoKeyReference: resolve() returning: ${result?.javaClass?.simpleName ?: "null"}")
+        LOG.warn("TRANSLOCO-REF: resolve() returning: ${result?.javaClass?.simpleName ?: "null"}")
         return result
     }
 
-    /**
-     * Get variants for code completion.
-     * Returns all available translation keys.
-     */
     override fun getVariants(): Array<Any> {
-        LOG.info("TranslocoKeyReference: getVariants() called")
+        LOG.warn("TRANSLOCO-REF: getVariants() called for completion")
 
         val project = element.project
         val primaryFile = TranslationFileFinder.findPrimaryTranslationFile(project)
         if (primaryFile == null) {
-            LOG.warn("TranslocoKeyReference: No primary translation file found")
+            LOG.warn("TRANSLOCO-REF: No primary translation file found for completion")
             return emptyArray()
         }
-
-        LOG.info("TranslocoKeyReference: Primary translation file: ${primaryFile.path}")
 
         val psiFile = PsiManager.getInstance(project).findFile(primaryFile) as? JsonFile
-        if (psiFile == null) {
-            LOG.warn("TranslocoKeyReference: Could not open primary file as JsonFile")
-            return emptyArray()
-        }
+            ?: return emptyArray()
 
         val allKeys = JsonKeyNavigator.getAllKeys(psiFile)
-        LOG.info("TranslocoKeyReference: Found ${allKeys.size} keys for completion")
+        LOG.warn("TRANSLOCO-REF: Found ${allKeys.size} keys for completion")
 
         return allKeys.map { keyPath ->
             val value = JsonKeyNavigator.getStringValue(psiFile, keyPath)
@@ -109,42 +92,23 @@ class TranslocoKeyReference(
         }.toTypedArray()
     }
 
-    /**
-     * Handle element rename (refactoring).
-     */
-    override fun handleElementRename(newElementName: String): PsiElement {
-        LOG.info("TranslocoKeyReference: handleElementRename called with '$newElementName'")
-        return element
-    }
+    override fun handleElementRename(newElementName: String): PsiElement = element
 
-    /**
-     * Get the canonical text (the key itself).
-     */
     override fun getCanonicalText(): String = key
 
-    /**
-     * Check if this reference resolves to the given element.
-     */
     override fun isReferenceTo(element: PsiElement): Boolean {
         val resolved = multiResolve(false)
         return resolved.any { it.element == element }
     }
 
-    /**
-     * Check if the reference is soft (doesn't show error if unresolved).
-     */
     override fun isSoft(): Boolean = true
 }
 
-/**
- * Lookup element for code completion.
- */
 class TranslocoLookupElement(
     private val key: String,
     private val value: String?
 ) {
     override fun toString(): String = key
-
     fun getKey(): String = key
     fun getValue(): String? = value
     fun getPresentableText(): String = key

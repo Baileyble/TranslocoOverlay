@@ -7,15 +7,10 @@ import com.intellij.psi.*
 import com.intellij.psi.xml.XmlAttribute
 import com.intellij.psi.xml.XmlAttributeValue
 import com.intellij.psi.xml.XmlText
-import com.intellij.psi.xml.XmlToken
 import com.intellij.util.ProcessingContext
 
 /**
  * Registers reference providers for Transloco translation keys.
- *
- * This contributor registers patterns to detect transloco keys in:
- * - HTML templates (Angular)
- * - TypeScript files (service calls)
  */
 class TranslocoReferenceContributor : PsiReferenceContributor() {
 
@@ -24,7 +19,9 @@ class TranslocoReferenceContributor : PsiReferenceContributor() {
     }
 
     override fun registerReferenceProviders(registrar: PsiReferenceRegistrar) {
-        LOG.info("TranslocoReferenceContributor: Registering reference providers")
+        // Use WARN level so it shows up prominently in logs
+        LOG.warn("====== TRANSLOCO OVERLAY PLUGIN LOADED ======")
+        LOG.warn("TranslocoReferenceContributor: Registering reference providers")
 
         // Register for XML attribute values (handles most HTML template cases)
         registrar.registerReferenceProvider(
@@ -38,7 +35,8 @@ class TranslocoReferenceContributor : PsiReferenceContributor() {
             TranslocoReferenceProvider()
         )
 
-        LOG.info("TranslocoReferenceContributor: Reference providers registered successfully")
+        LOG.warn("TranslocoReferenceContributor: Reference providers registered successfully")
+        LOG.warn("==============================================")
     }
 
     private fun xmlAttributeValuePattern(): PsiElementPattern.Capture<XmlAttributeValue> {
@@ -57,6 +55,7 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
 
     companion object {
         private val LOG = Logger.getInstance(TranslocoReferenceProvider::class.java)
+        private var loggedOnce = false
     }
 
     override fun getReferencesByElement(
@@ -72,34 +71,41 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
             return PsiReference.EMPTY_ARRAY
         }
 
-        LOG.info("TranslocoReferenceProvider: Processing element in ${file.name}")
-        LOG.info("TranslocoReferenceProvider: Element type: ${element.javaClass.simpleName}")
-        LOG.info("TranslocoReferenceProvider: Element text: '$text'")
+        // Log first HTML file we encounter
+        if (!loggedOnce) {
+            LOG.warn("TRANSLOCO: First HTML file encountered: ${file.name}")
+            loggedOnce = true
+        }
 
         // Check if this is a transloco-related element
         val isTranslocoContext = isTranslocoContext(element, text)
-        LOG.info("TranslocoReferenceProvider: Is transloco context: $isTranslocoContext")
 
         if (!isTranslocoContext) {
             return PsiReference.EMPTY_ARRAY
         }
 
+        // Log when we find transloco context
+        LOG.warn("TRANSLOCO: Found transloco context in ${file.name}")
+        LOG.warn("TRANSLOCO: Element type: ${element.javaClass.simpleName}")
+        LOG.warn("TRANSLOCO: Element text: '${text.take(100)}${if (text.length > 100) "..." else ""}'")
+
         // Extract the key from the element
         val key = extractTranslocoKey(element, text)
-        LOG.info("TranslocoReferenceProvider: Extracted key: $key")
+        LOG.warn("TRANSLOCO: Extracted key: $key")
 
         if (key == null) {
+            LOG.warn("TRANSLOCO: Could not extract key from element")
             return PsiReference.EMPTY_ARRAY
         }
 
         // Calculate the range of the key within the element
         val keyStart = text.indexOf(key)
         if (keyStart < 0) {
-            LOG.warn("TranslocoReferenceProvider: Could not find key '$key' in text '$text'")
+            LOG.warn("TRANSLOCO: Could not find key '$key' in text")
             return PsiReference.EMPTY_ARRAY
         }
 
-        LOG.info("TranslocoReferenceProvider: Creating reference for key '$key' at offset $keyStart")
+        LOG.warn("TRANSLOCO: Creating reference for key '$key' at offset $keyStart")
 
         return arrayOf(
             TranslocoKeyReference(
@@ -119,7 +125,6 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
     private fun isTranslocoContext(element: PsiElement, text: String): Boolean {
         // Check for pipe syntax: contains | transloco
         if (text.contains("| transloco") || text.contains("|transloco")) {
-            LOG.info("TranslocoReferenceProvider: Found pipe syntax")
             return true
         }
 
@@ -128,7 +133,6 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
             val parent = element.parent
             if (parent is XmlAttribute) {
                 val attrName = parent.name
-                LOG.info("TranslocoReferenceProvider: Attribute name: $attrName")
                 if (attrName == "transloco" || attrName == "[transloco]") {
                     return true
                 }
@@ -137,7 +141,6 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
 
         // Check for transloco in text content
         if (text.contains("transloco")) {
-            LOG.info("TranslocoReferenceProvider: Found transloco in text")
             return true
         }
 
@@ -155,18 +158,14 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
                 val attrName = parent.name
                 if (attrName == "transloco") {
                     // Direct attribute: transloco="key.path"
-                    // Remove quotes
                     val value = text.trim().removeSurrounding("\"").removeSurrounding("'")
-                    LOG.info("TranslocoReferenceProvider: Direct attribute key: $value")
                     return value.takeIf { it.isNotEmpty() && !it.startsWith("{") }
                 }
                 if (attrName == "[transloco]") {
                     // Binding: [transloco]="'key.path'"
                     val innerQuotePattern = Regex("""['"]([^'"]+)['"]""")
                     val match = innerQuotePattern.find(text)
-                    val key = match?.groupValues?.get(1)
-                    LOG.info("TranslocoReferenceProvider: Binding attribute key: $key")
-                    return key
+                    return match?.groupValues?.get(1)
                 }
             }
         }
@@ -175,18 +174,14 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
         val pipePattern = Regex("""['"]([^'"]+)['"]\s*\|\s*transloco""")
         val pipeMatch = pipePattern.find(text)
         if (pipeMatch != null) {
-            val key = pipeMatch.groupValues[1]
-            LOG.info("TranslocoReferenceProvider: Pipe syntax key: $key")
-            return key
+            return pipeMatch.groupValues[1]
         }
 
         // For t() function: t('key.path')
         val tFunctionPattern = Regex("""t\s*\(\s*['"]([^'"]+)['"]""")
         val tMatch = tFunctionPattern.find(text)
         if (tMatch != null) {
-            val key = tMatch.groupValues[1]
-            LOG.info("TranslocoReferenceProvider: t() function key: $key")
-            return key
+            return tMatch.groupValues[1]
         }
 
         return null

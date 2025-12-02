@@ -1,11 +1,12 @@
 package com.baileyble.translocooverlay
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
-import com.intellij.codeInsight.hints.InlayHintsSettings
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
@@ -57,7 +58,6 @@ class TranslocoToggleTranslationsAction : AnAction() {
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val editor = e.getData(CommonDataKeys.EDITOR) ?: return
         val file = e.getData(CommonDataKeys.PSI_FILE) ?: return
 
         val service = TranslocoTranslationToggleService.getInstance(project)
@@ -65,7 +65,9 @@ class TranslocoToggleTranslationsAction : AnAction() {
 
         LOG.warn("TRANSLOCO-TOGGLE: Translations display set to ${service.showTranslations}")
 
-        // Refresh the editor to update inlay hints
-        DaemonCodeAnalyzer.getInstance(project).restart(file)
+        // Refresh the editor to update inlay hints - use invokeLater for proper threading
+        ApplicationManager.getApplication().invokeLater({
+            DaemonCodeAnalyzer.getInstance(project).restart(file)
+        }, ModalityState.defaultModalityState())
     }
 }

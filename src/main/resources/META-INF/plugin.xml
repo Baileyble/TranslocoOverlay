@@ -11,8 +11,8 @@
         <ul>
             <li>Hover over translation keys to see their values</li>
             <li>Ctrl+Click to navigate to JSON translation files</li>
+            <li>Ctrl+Shift+Click to edit translation values</li>
             <li>Autocomplete for translation keys</li>
-            <li>Inline editing of translation values (Alt+Enter)</li>
             <li>Toggle inline translation preview (Ctrl+Alt+T or Tools menu)</li>
         </ul>
 
@@ -47,12 +47,9 @@
                 language="any"
                 implementationClass="com.baileyble.translocooverlay.TranslocoCompletionContributor"/>
 
-        <!-- Intention action for inline editing (Alt+Enter) -->
-        <intentionAction>
-            <language>any</language>
-            <className>com.baileyble.translocooverlay.TranslocoEditAction</className>
-            <category>Transloco</category>
-        </intentionAction>
+        <!-- Editor factory listener for Ctrl+Shift+Click editing -->
+        <editorFactoryListener
+                implementation="com.baileyble.translocooverlay.TranslocoEditorFactoryListener"/>
 
         <!-- Inlay hints provider for showing translations inline -->
         <codeInsight.inlayProvider

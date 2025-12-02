@@ -2,54 +2,52 @@ package com.baileyble.translocooverlay
 
 import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
-import com.intellij.codeInsight.intention.IntentionAction
-import com.intellij.codeInsight.intention.PsiElementBaseIntentionAction
 import com.intellij.json.psi.JsonElementGenerator
 import com.intellij.json.psi.JsonFile
 import com.intellij.json.psi.JsonStringLiteral
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
-import com.intellij.util.IncorrectOperationException
 
 /**
- * Intention action to edit Transloco translation values inline.
- * Triggered via Alt+Enter when cursor is on a translation key.
+ * Utility class for editing Transloco translation values.
+ * Can be invoked from various triggers (Ctrl+Shift+Click, intention action, etc.)
  */
-class TranslocoEditAction : PsiElementBaseIntentionAction(), IntentionAction {
+object TranslocoEditUtil {
 
-    companion object {
-        private val LOG = Logger.getInstance(TranslocoEditAction::class.java)
+    private val LOG = Logger.getInstance(TranslocoEditUtil::class.java)
 
-        private val PIPE_PATTERN = Regex("""['"]([^'"]+)['"]\s*\|\s*transloco""")
-        private val DIRECT_ATTR_PATTERN = Regex("""(?<!\[)transloco\s*=\s*["']([^"']+)["']""")
-        private val BINDING_ATTR_PATTERN = Regex("""\[transloco]\s*=\s*["']['"]?([^"']+)['"]?["']""")
-        private val T_FUNCTION_PATTERN = Regex("""t\s*\(\s*['"]([^'"]+)['"]\s*[,)]""")
-        private val STRUCTURAL_DIRECTIVE_PATTERN = Regex("""\*transloco\s*=\s*["']([^"']+)["']""")
-        private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
-    }
+    private val PIPE_PATTERN = Regex("""['"]([^'"]+)['"]\s*\|\s*transloco""")
+    private val DIRECT_ATTR_PATTERN = Regex("""(?<!\[)transloco\s*=\s*["']([^"']+)["']""")
+    private val BINDING_ATTR_PATTERN = Regex("""\[transloco]\s*=\s*["']['"]?([^"']+)['"]?["']""")
+    private val T_FUNCTION_PATTERN = Regex("""t\s*\(\s*['"]([^'"]+)['"]\s*[,)]""")
+    private val STRUCTURAL_DIRECTIVE_PATTERN = Regex("""\*transloco\s*=\s*["']([^"']+)["']""")
+    private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
 
-    override fun getText(): String = "Edit Transloco translation"
+    /**
+     * Data class for translation info.
+     */
+    data class TranslationInfo(
+        val lang: String,
+        val value: String?,
+        val keyInFile: String
+    )
 
-    override fun getFamilyName(): String = "Transloco"
-
-    override fun isAvailable(project: Project, editor: Editor?, element: PsiElement): Boolean {
-        val file = element.containingFile ?: return false
-        if (!file.name.lowercase().endsWith(".html")) {
-            return false
+    /**
+     * Edit a translation key. Shows dialog and updates the JSON file.
+     */
+    fun editTranslation(project: Project, element: PsiElement) {
+        val key = extractTranslocoKey(element)
+        if (key == null) {
+            LOG.warn("TRANSLOCO-EDIT: No key found at element")
+            return
         }
-
-        // Check if we're on a transloco key
-        return extractTranslocoKey(element) != null
-    }
-
-    @Throws(IncorrectOperationException::class)
-    override fun invoke(project: Project, editor: Editor?, element: PsiElement) {
-        val key = extractTranslocoKey(element) ?: return
 
         LOG.warn("TRANSLOCO-EDIT: Editing key '$key'")
 
@@ -57,11 +55,13 @@ class TranslocoEditAction : PsiElementBaseIntentionAction(), IntentionAction {
         val translationData = findTranslationData(project, key)
 
         if (translationData.isEmpty()) {
-            Messages.showWarningDialog(
-                project,
-                "Could not find translation key '$key' in any translation file.",
-                "Translation Not Found"
-            )
+            ApplicationManager.getApplication().invokeLater({
+                Messages.showWarningDialog(
+                    project,
+                    "Could not find translation key '$key' in any translation file.",
+                    "Translation Not Found"
+                )
+            }, ModalityState.defaultModalityState())
             return
         }
 
@@ -71,33 +71,41 @@ class TranslocoEditAction : PsiElementBaseIntentionAction(), IntentionAction {
 
         val currentValue = primaryEntry.key.value ?: ""
         val langDisplay = primaryEntry.key.lang.uppercase()
+        val file = primaryEntry.value
+        val keyInFile = primaryEntry.key.keyInFile
 
-        // Show input dialog
-        val newValue = Messages.showInputDialog(
-            project,
-            "Edit translation for '$key' ($langDisplay):",
-            "Edit Translation",
-            Messages.getQuestionIcon(),
-            currentValue,
-            null
-        )
+        // Show input dialog on EDT with proper modality
+        ApplicationManager.getApplication().invokeLater({
+            val newValue = Messages.showInputDialog(
+                project,
+                "Edit translation for '$key' ($langDisplay):",
+                "Edit Translation",
+                Messages.getQuestionIcon(),
+                currentValue,
+                null
+            )
 
-        if (newValue == null || newValue == currentValue) {
-            return // Cancelled or no change
-        }
+            if (newValue != null && newValue != currentValue) {
+                // Write the new value in a write action
+                WriteCommandAction.runWriteCommandAction(project, "Edit Transloco Translation", null, {
+                    updateTranslation(project, file, keyInFile, newValue)
+                })
+                LOG.warn("TRANSLOCO-EDIT: Updated '$key' to '$newValue'")
+            }
+        }, ModalityState.defaultModalityState())
+    }
 
-        // Write the new value to the JSON file
-        WriteCommandAction.runWriteCommandAction(project) {
-            updateTranslation(project, primaryEntry.value, primaryEntry.key.keyInFile, newValue)
-        }
-
-        LOG.warn("TRANSLOCO-EDIT: Updated '$key' to '$newValue'")
+    /**
+     * Check if element is on a transloco key.
+     */
+    fun isOnTranslocoKey(element: PsiElement): Boolean {
+        return extractTranslocoKey(element) != null
     }
 
     /**
      * Extract the translation key from the element context.
      */
-    private fun extractTranslocoKey(element: PsiElement): String? {
+    fun extractTranslocoKey(element: PsiElement): String? {
         // First try t() function pattern
         val tFunctionKey = extractTFunctionKey(element)
         if (tFunctionKey != null) {
@@ -189,23 +197,13 @@ class TranslocoEditAction : PsiElementBaseIntentionAction(), IntentionAction {
     }
 
     /**
-     * Data class for translation info.
-     */
-    data class TranslationInfo(
-        val lang: String,
-        val value: String?,
-        val keyInFile: String  // The actual key path in the JSON file (might differ from full key for scoped files)
-    )
-
-    /**
      * Find translation data for the given key.
-     * Returns a map of TranslationInfo to the VirtualFile containing it.
      */
     private fun findTranslationData(
         project: Project,
         key: String
-    ): Map<TranslationInfo, com.intellij.openapi.vfs.VirtualFile> {
-        val result = mutableMapOf<TranslationInfo, com.intellij.openapi.vfs.VirtualFile>()
+    ): Map<TranslationInfo, VirtualFile> {
+        val result = mutableMapOf<TranslationInfo, VirtualFile>()
 
         // Try main translation files
         val mainFiles = TranslationFileFinder.findTranslationFiles(project)
@@ -245,7 +243,7 @@ class TranslocoEditAction : PsiElementBaseIntentionAction(), IntentionAction {
      */
     private fun updateTranslation(
         project: Project,
-        file: com.intellij.openapi.vfs.VirtualFile,
+        file: VirtualFile,
         keyPath: String,
         newValue: String
     ) {
@@ -259,18 +257,9 @@ class TranslocoEditAction : PsiElementBaseIntentionAction(), IntentionAction {
 
         val currentValue = navResult.value
         if (currentValue is JsonStringLiteral) {
-            // Create new string literal with escaped value
             val generator = JsonElementGenerator(project)
-            val escapedValue = newValue
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t")
-
-            val newLiteral = generator.createStringLiteral(escapedValue)
+            val newLiteral = generator.createStringLiteral(newValue)
             currentValue.replace(newLiteral)
-
             LOG.warn("TRANSLOCO-EDIT: Successfully updated value in ${file.name}")
         } else {
             LOG.warn("TRANSLOCO-EDIT: Value is not a string literal, cannot update")

@@ -127,26 +127,77 @@ object TranslationFileFinder {
 
     /**
      * Find scoped translation files (e.g., for lazy-loaded modules).
+     * Searches for patterns like:
+     * - i18n/eligibility/en.json
+     * - assets/i18n/eligibility/en.json
+     * - eligibility/i18n/en.json
      *
      * @param project The IntelliJ project
-     * @param scope The scope name (e.g., "admin", "dashboard")
-     * @return Map of language code to VirtualFile for the scope
+     * @param scope The scope name (e.g., "admin", "dashboard", "eligibility")
+     * @return List of VirtualFiles for the scope
      */
-    fun findScopedTranslationFiles(project: Project, scope: String): Map<String, VirtualFile> {
+    fun findScopedTranslationFiles(project: Project, scope: String): List<VirtualFile> {
         val searchScope = GlobalSearchScope.projectScope(project)
-        val result = mutableMapOf<String, VirtualFile>()
+        val result = mutableListOf<VirtualFile>()
+        val scopeLower = scope.lowercase()
 
         for (langFile in COMMON_LANG_FILES) {
             val files = FilenameIndex.getVirtualFilesByName(langFile, searchScope)
             for (file in files) {
                 val path = file.path.lowercase()
-                if (path.contains("/$scope/") || path.contains("\\$scope\\")) {
-                    val lang = file.nameWithoutExtension
-                    result[lang] = file
+
+                // Exclude node_modules, etc.
+                if (EXCLUDED_PATHS.any { excluded ->
+                    path.contains("/$excluded/") || path.contains("\\$excluded\\")
+                }) {
+                    continue
+                }
+
+                // Check if the scope name is in the path
+                // Match patterns like: /eligibility/en.json, /i18n/eligibility/en.json
+                if (path.contains("/$scopeLower/") || path.contains("\\$scopeLower\\")) {
+                    result.add(file)
                 }
             }
         }
 
-        return result
+        return result.distinctBy { it.path }
+    }
+
+    /**
+     * Find all translation files including those in scope subdirectories.
+     * This is a broader search that includes scoped translations.
+     *
+     * @param project The IntelliJ project
+     * @return List of all VirtualFiles that could be translation files
+     */
+    fun findAllTranslationFiles(project: Project): List<VirtualFile> {
+        val scope = GlobalSearchScope.projectScope(project)
+        val result = mutableListOf<VirtualFile>()
+
+        for (langFile in COMMON_LANG_FILES) {
+            val files = FilenameIndex.getVirtualFilesByName(langFile, scope)
+            for (file in files) {
+                val path = file.path.lowercase()
+
+                // Exclude node_modules, dist, etc.
+                if (EXCLUDED_PATHS.any { excluded ->
+                    path.contains("/$excluded/") || path.contains("\\$excluded\\")
+                }) {
+                    continue
+                }
+
+                // Include if it's in an i18n-related directory or has i18n in path
+                val isI18nRelated = DEFAULT_I18N_PATHS.any { i18nPath ->
+                    path.contains("/$i18nPath/") || path.contains("\\$i18nPath\\")
+                } || path.contains("/i18n/") || path.contains("\\i18n\\")
+
+                if (isI18nRelated) {
+                    result.add(file)
+                }
+            }
+        }
+
+        return result.distinctBy { it.path }
     }
 }

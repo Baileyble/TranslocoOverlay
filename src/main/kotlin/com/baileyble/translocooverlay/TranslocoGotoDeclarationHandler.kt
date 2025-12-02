@@ -278,16 +278,19 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
     /**
      * Find translation targets in JSON files.
+     * Tries multiple resolution strategies:
+     * 1. Full key in main translation files
+     * 2. If key has a scope prefix (e.g., "eligibility.foo.bar"), try scoped files
      */
     private fun findTranslationTargets(element: PsiElement, key: String): List<PsiElement> {
         val project = element.project
-        val translationFiles = TranslationFileFinder.findTranslationFiles(project)
-
-        LOG.warn("TRANSLOCO-GOTO: Searching for '$key' in ${translationFiles.size} files")
-
         val targets = mutableListOf<PsiElement>()
 
-        for (file in translationFiles) {
+        // Strategy 1: Try full key in main translation files
+        val mainTranslationFiles = TranslationFileFinder.findTranslationFiles(project)
+        LOG.warn("TRANSLOCO-GOTO: Searching for '$key' in ${mainTranslationFiles.size} main files")
+
+        for (file in mainTranslationFiles) {
             val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
                 ?: continue
 
@@ -296,6 +299,61 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             if (navResult.found && navResult.property != null) {
                 LOG.warn("TRANSLOCO-GOTO: Found '$key' in ${file.name}")
                 targets.add(navResult.property)
+            }
+        }
+
+        // If found in main files, return early
+        if (targets.isNotEmpty()) {
+            return targets
+        }
+
+        // Strategy 2: Try scoped resolution
+        // Key like "eligibility.householdContactInformation.addSecondPhone"
+        // -> scope = "eligibility", keyWithoutScope = "householdContactInformation.addSecondPhone"
+        val keyParts = key.split(".")
+        if (keyParts.size >= 2) {
+            val potentialScope = keyParts[0]
+            val keyWithoutScope = keyParts.drop(1).joinToString(".")
+
+            LOG.warn("TRANSLOCO-GOTO: Trying scoped resolution: scope='$potentialScope', key='$keyWithoutScope'")
+
+            // Find scoped translation files (files in directories matching the scope)
+            val scopedFiles = TranslationFileFinder.findScopedTranslationFiles(project, potentialScope)
+            LOG.warn("TRANSLOCO-GOTO: Found ${scopedFiles.size} scoped files for '$potentialScope'")
+
+            for (file in scopedFiles) {
+                val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
+                    ?: continue
+
+                LOG.warn("TRANSLOCO-GOTO: Checking scoped file: ${file.path}")
+
+                val navResult = JsonKeyNavigator.navigateToKey(psiFile, keyWithoutScope)
+
+                if (navResult.found && navResult.property != null) {
+                    LOG.warn("TRANSLOCO-GOTO: Found '$keyWithoutScope' in scoped file ${file.name}")
+                    targets.add(navResult.property)
+                }
+            }
+        }
+
+        // Strategy 3: Try all translation files with the full key (broader search)
+        if (targets.isEmpty()) {
+            LOG.warn("TRANSLOCO-GOTO: Trying broader search in all translation files")
+            val allFiles = TranslationFileFinder.findAllTranslationFiles(project)
+
+            for (file in allFiles) {
+                // Skip files we already checked
+                if (mainTranslationFiles.any { it.path == file.path }) continue
+
+                val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
+                    ?: continue
+
+                val navResult = JsonKeyNavigator.navigateToKey(psiFile, key)
+
+                if (navResult.found && navResult.property != null) {
+                    LOG.warn("TRANSLOCO-GOTO: Found '$key' in ${file.path}")
+                    targets.add(navResult.property)
+                }
             }
         }
 

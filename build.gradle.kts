@@ -18,20 +18,20 @@ repositories {
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     intellijPlatform {
-        // Use WebStorm as the target IDE for development
-        webStorm("2025.1.1")
+        // Use IntelliJ IDEA Community as base, with JavaScript plugin for Angular support
+        intellijIdeaCommunity("2024.3")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // Required plugin dependencies for Transloco support
-        bundledPlugin("JavaScript")
-        bundledPlugin("com.intellij.modules.json")
+        // JavaScript plugin provides Angular/TypeScript support
+        plugin("JavaScript", "243.21565.193")
     }
 }
 
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "251"
+            sinceBuild = "243"
         }
 
         changeNotes = """

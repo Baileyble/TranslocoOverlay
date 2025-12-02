@@ -42,7 +42,7 @@ class TranslocoReferenceContributor : PsiReferenceContributor() {
      * Pattern for XML text/interpolation content.
      * Matches content like: {{ 'key' | transloco }}
      */
-    private fun xmlTextPattern(): PsiElementPattern.Capture<PsiElement> {
+    private fun xmlTextPattern(): PsiElementPattern.Capture<XmlToken> {
         return PlatformPatterns.psiElement(XmlToken::class.java)
     }
 }

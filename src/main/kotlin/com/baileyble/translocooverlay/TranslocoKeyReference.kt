@@ -3,9 +3,9 @@ package com.baileyble.translocooverlay
 import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
 import com.intellij.json.psi.JsonFile
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.*
-import com.intellij.psi.PsiElementResolveResult
 
 /**
  * PSI Reference for Transloco translation keys.
@@ -24,25 +24,46 @@ class TranslocoKeyReference(
     private val rangeInElement: TextRange
 ) : PsiReferenceBase<PsiElement>(element, rangeInElement, true), PsiPolyVariantReference {
 
+    companion object {
+        private val LOG = Logger.getInstance(TranslocoKeyReference::class.java)
+    }
+
+    init {
+        LOG.info("TranslocoKeyReference: Created reference for key '$key' in element ${element.javaClass.simpleName}")
+    }
+
     /**
      * Resolve to multiple targets (one per language file).
      */
     override fun multiResolve(incompleteCode: Boolean): Array<ResolveResult> {
+        LOG.info("TranslocoKeyReference: multiResolve called for key '$key'")
+
         val project = element.project
         val translationFiles = TranslationFileFinder.findTranslationFiles(project)
+
+        LOG.info("TranslocoKeyReference: Found ${translationFiles.size} translation files")
+        translationFiles.forEach { file ->
+            LOG.info("TranslocoKeyReference: Translation file: ${file.path}")
+        }
 
         val results = mutableListOf<ResolveResult>()
 
         for (file in translationFiles) {
             val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
-                ?: continue
+            if (psiFile == null) {
+                LOG.warn("TranslocoKeyReference: Could not open ${file.path} as JsonFile")
+                continue
+            }
 
             val navResult = JsonKeyNavigator.navigateToKey(psiFile, key)
+            LOG.info("TranslocoKeyReference: Navigation result for '$key' in ${file.name}: found=${navResult.found}, value=${navResult.stringValue}")
+
             if (navResult.found && navResult.property != null) {
                 results.add(PsiElementResolveResult(navResult.property))
             }
         }
 
+        LOG.info("TranslocoKeyReference: Resolved to ${results.size} targets")
         return results.toTypedArray()
     }
 
@@ -50,8 +71,11 @@ class TranslocoKeyReference(
      * Resolve to a single target (primary language file).
      */
     override fun resolve(): PsiElement? {
+        LOG.info("TranslocoKeyReference: resolve() called for key '$key'")
         val results = multiResolve(false)
-        return results.firstOrNull()?.element
+        val result = results.firstOrNull()?.element
+        LOG.info("TranslocoKeyReference: resolve() returning: ${result?.javaClass?.simpleName ?: "null"}")
+        return result
     }
 
     /**
@@ -59,14 +83,25 @@ class TranslocoKeyReference(
      * Returns all available translation keys.
      */
     override fun getVariants(): Array<Any> {
+        LOG.info("TranslocoKeyReference: getVariants() called")
+
         val project = element.project
         val primaryFile = TranslationFileFinder.findPrimaryTranslationFile(project)
-            ?: return emptyArray()
+        if (primaryFile == null) {
+            LOG.warn("TranslocoKeyReference: No primary translation file found")
+            return emptyArray()
+        }
+
+        LOG.info("TranslocoKeyReference: Primary translation file: ${primaryFile.path}")
 
         val psiFile = PsiManager.getInstance(project).findFile(primaryFile) as? JsonFile
-            ?: return emptyArray()
+        if (psiFile == null) {
+            LOG.warn("TranslocoKeyReference: Could not open primary file as JsonFile")
+            return emptyArray()
+        }
 
         val allKeys = JsonKeyNavigator.getAllKeys(psiFile)
+        LOG.info("TranslocoKeyReference: Found ${allKeys.size} keys for completion")
 
         return allKeys.map { keyPath ->
             val value = JsonKeyNavigator.getStringValue(psiFile, keyPath)
@@ -78,8 +113,7 @@ class TranslocoKeyReference(
      * Handle element rename (refactoring).
      */
     override fun handleElementRename(newElementName: String): PsiElement {
-        // The new name should be the last segment of the key path
-        // For now, we don't support renaming the full key path
+        LOG.info("TranslocoKeyReference: handleElementRename called with '$newElementName'")
         return element
     }
 

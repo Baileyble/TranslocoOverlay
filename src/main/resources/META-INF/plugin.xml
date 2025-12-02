@@ -1,29 +1,40 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
     <id>com.baileyble.TranslocoOverlay</id>
+    <name>Transloco Overlay</name>
+    <vendor url="https://github.com/Baileyble">Baileyble</vendor>
 
-    <!-- Public plugin name should be written in Title Case.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
-    <name>TranslocoOverlay</name>
-
-    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor url="https://www.yourcompany.com">YourCompany</vendor>
-
-    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
     <description><![CDATA[
-        Enter short description for your plugin here.<br>
-        <em>most HTML tags may be used</em>
+        <p>Provides hover-to-view and inline editing for Transloco translation keys in Angular templates.</p>
+
+        <h3>Features</h3>
+        <ul>
+            <li>Hover over translation keys to see their values</li>
+            <li>Ctrl+Click to navigate to JSON translation files</li>
+            <li>Autocomplete for translation keys</li>
+            <li>Inline editing of translation values</li>
+        </ul>
+
+        <h3>Supported Patterns</h3>
+        <ul>
+            <li><code>{{ 'key' | transloco }}</code></li>
+            <li><code>[transloco]="'key'"</code></li>
+            <li><code>transloco="key"</code></li>
+        </ul>
     ]]></description>
 
-    <!-- Product and plugin compatibility requirements.
-         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <!-- Platform and plugin dependencies -->
     <depends>com.intellij.modules.platform</depends>
+    <depends>JavaScript</depends>
 
-    <!-- Extension points defined by the plugin.
-         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
+        <!-- Reference contributor for Ctrl+Click navigation -->
+        <!-- <psi.referenceContributor implementation="com.baileyble.translocooverlay.TranslocoReferenceContributor"/> -->
 
+        <!-- Documentation provider for hover tooltips -->
+        <!-- <documentationProvider implementation="com.baileyble.translocooverlay.TranslocoDocumentationProvider"/> -->
+
+        <!-- Completion contributor for autocomplete -->
+        <!-- <completion.contributor language="HTML" implementationClass="com.baileyble.translocooverlay.TranslocoCompletionContributor"/> -->
     </extensions>
 </idea-plugin>

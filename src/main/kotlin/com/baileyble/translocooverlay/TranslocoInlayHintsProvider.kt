@@ -3,7 +3,6 @@ package com.baileyble.translocooverlay
 import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
 import com.intellij.codeInsight.hints.*
-import com.intellij.codeInsight.hints.presentation.InlayPresentation
 import com.intellij.codeInsight.hints.presentation.PresentationFactory
 import com.intellij.json.psi.JsonFile
 import com.intellij.openapi.editor.Editor
@@ -11,7 +10,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
-import com.intellij.psi.util.PsiTreeUtil
 import javax.swing.JComponent
 import javax.swing.JPanel
 
@@ -64,14 +62,29 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
         private val file: PsiFile
     ) : InlayHintsCollector {
 
+        // Track processed offsets to avoid duplicates
+        private val processedOffsets = mutableSetOf<Int>()
+
+        // Cache translations for performance
+        private val translationCache = mutableMapOf<String, String?>()
+
         override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
+            // Only process leaf elements (elements with no children) to avoid duplicates
+            if (element.firstChild != null) return true
+
             val project = element.project
             val text = element.text ?: return true
 
             // Find all transloco patterns in this element
             findTranslocoKeys(text, element).forEach { (key, offset, scope) ->
+                val absoluteOffset = element.textRange.startOffset + offset
+
+                // Skip if we've already processed this offset
+                if (processedOffsets.contains(absoluteOffset)) return@forEach
+                processedOffsets.add(absoluteOffset)
+
                 val fullKey = if (scope != null) "$scope.$key" else key
-                val translation = resolveTranslation(project, fullKey)
+                val translation = getCachedTranslation(project, fullKey)
 
                 if (translation != null) {
                     val factory = PresentationFactory(editor)
@@ -83,12 +96,17 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
                         factory.smallText(" = \"$truncated\"")
                     )
 
-                    val absoluteOffset = element.textRange.startOffset + offset
                     sink.addInlineElement(absoluteOffset, false, presentation, false)
                 }
             }
 
             return true
+        }
+
+        private fun getCachedTranslation(project: Project, key: String): String? {
+            return translationCache.getOrPut(key) {
+                resolveTranslation(project, key)
+            }
         }
 
         private data class KeyMatch(val key: String, val endOffset: Int, val scope: String?)

@@ -8,7 +8,6 @@ import com.intellij.json.psi.JsonObject
 import com.intellij.json.psi.JsonProperty
 import com.intellij.json.psi.JsonStringLiteral
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -16,12 +15,13 @@ import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiManager
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import java.awt.*
-import java.awt.event.ActionEvent
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -86,124 +86,191 @@ class TranslocoEditDialog(
     }
 
     override fun createCenterPanel(): JComponent {
-        val mainPanel = JPanel(BorderLayout(0, JBUI.scale(10)))
-        mainPanel.preferredSize = Dimension(JBUI.scale(600), JBUI.scale(400))
+        val mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
+        mainPanel.preferredSize = Dimension(JBUI.scale(650), JBUI.scale(450))
+        mainPanel.border = JBUI.Borders.empty(8)
 
         // Header with key info
-        val headerPanel = JPanel(BorderLayout())
-        headerPanel.border = JBUI.Borders.emptyBottom(10)
+        val headerPanel = JPanel(GridBagLayout())
+        headerPanel.border = JBUI.Borders.emptyBottom(12)
+        val gbc = GridBagConstraints().apply {
+            gridx = 0
+            gridy = 0
+            anchor = GridBagConstraints.WEST
+            fill = GridBagConstraints.HORIZONTAL
+            weightx = 1.0
+        }
 
-        val keyLabel = JBLabel("Key: $translationKey")
-        keyLabel.font = keyLabel.font.deriveFont(Font.BOLD, 14f)
-        headerPanel.add(keyLabel, BorderLayout.NORTH)
+        // Key label with monospace font for the key itself
+        val keyPrefix = JBLabel("Key: ")
+        keyPrefix.font = keyPrefix.font.deriveFont(Font.BOLD)
+
+        val keyValue = JBLabel(translationKey)
+        keyValue.font = Font(Font.MONOSPACED, Font.PLAIN, keyValue.font.size)
+        keyValue.foreground = JBColor(Color(0, 102, 153), Color(102, 178, 255))
+
+        val keyPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
+        keyPanel.add(keyPrefix)
+        keyPanel.add(keyValue)
+        headerPanel.add(keyPanel, gbc)
 
         if (isNewKey) {
+            gbc.gridy = 1
+            gbc.insets = JBUI.insets(4, 0, 0, 0)
             val infoLabel = JBLabel("This key doesn't exist yet. Fill in values to create it.")
-            infoLabel.foreground = Color(100, 150, 100)
-            headerPanel.add(infoLabel, BorderLayout.SOUTH)
+            infoLabel.foreground = JBColor(Color(80, 140, 80), Color(120, 180, 120))
+            infoLabel.font = infoLabel.font.deriveFont(Font.ITALIC)
+            headerPanel.add(infoLabel, gbc)
         }
 
         mainPanel.add(headerPanel, BorderLayout.NORTH)
 
         // Translations panel with scroll
-        val translationsPanel = JPanel()
-        translationsPanel.layout = BoxLayout(translationsPanel, BoxLayout.Y_AXIS)
-        translationsPanel.border = JBUI.Borders.empty(5)
+        val translationsPanel = JPanel(GridBagLayout())
+        translationsPanel.border = JBUI.Borders.empty(8)
+        val rowGbc = GridBagConstraints()
+        var row = 0
 
         // Add English first (source for translations)
-        addLanguageRow(translationsPanel, "en", true)
+        addLanguageRow(translationsPanel, "en", true, rowGbc, row++)
 
-        // Add separator
-        translationsPanel.add(Box.createVerticalStrut(JBUI.scale(10)))
-        val separator = JSeparator()
-        separator.maximumSize = Dimension(Int.MAX_VALUE, 1)
-        translationsPanel.add(separator)
-        translationsPanel.add(Box.createVerticalStrut(JBUI.scale(10)))
+        // Add separator with label
+        rowGbc.apply {
+            gridx = 0
+            gridy = row++
+            gridwidth = 3
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(12, 0, 8, 0)
+            weightx = 1.0
+        }
+        val separatorPanel = JPanel(BorderLayout())
+        separatorPanel.add(JSeparator(), BorderLayout.CENTER)
+        translationsPanel.add(separatorPanel, rowGbc)
 
-        // Add "Translate All" button
-        val translateAllPanel = JPanel(FlowLayout(FlowLayout.LEFT))
+        // Add "Translate All" button row
+        rowGbc.apply {
+            gridy = row++
+            gridwidth = 3
+            insets = JBUI.insets(0, 0, 12, 0)
+        }
         val translateAllButton = JButton("Translate All from English")
+        translateAllButton.toolTipText = "Auto-translate empty fields using Google Translate"
         translateAllButton.addActionListener { translateAllFromEnglish() }
+        val translateAllPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
         translateAllPanel.add(translateAllButton)
-        translateAllPanel.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(40))
-        translationsPanel.add(translateAllPanel)
-        translationsPanel.add(Box.createVerticalStrut(JBUI.scale(5)))
+        translationsPanel.add(translateAllPanel, rowGbc)
 
         // Add other languages
         val otherLangs = translations.keys.filter { it != "en" }.sorted()
         for (lang in otherLangs) {
-            addLanguageRow(translationsPanel, lang, false)
+            addLanguageRow(translationsPanel, lang, false, rowGbc, row++)
         }
 
         // Add any common languages not already present
         for (lang in COMMON_LANGUAGES) {
             if (lang != "en" && !translations.containsKey(lang)) {
-                // Check if we have a file for this language
                 val langFiles = TranslationFileFinder.findTranslationFilesForLanguage(project, lang)
                 if (langFiles.isNotEmpty()) {
                     translations[lang] = TranslationEntry("", langFiles.first(), false)
-                    addLanguageRow(translationsPanel, lang, false)
+                    addLanguageRow(translationsPanel, lang, false, rowGbc, row++)
                 }
             }
         }
 
+        // Add vertical glue at the end
+        rowGbc.apply {
+            gridy = row
+            weighty = 1.0
+            fill = GridBagConstraints.BOTH
+        }
+        translationsPanel.add(Box.createVerticalGlue(), rowGbc)
+
         val scrollPane = JBScrollPane(translationsPanel)
-        scrollPane.border = JBUI.Borders.empty()
+        scrollPane.border = JBUI.Borders.customLine(JBColor.border(), 1)
         scrollPane.verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+        scrollPane.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
 
         mainPanel.add(scrollPane, BorderLayout.CENTER)
 
         return mainPanel
     }
 
-    private fun addLanguageRow(panel: JPanel, lang: String, isSource: Boolean) {
-        val rowPanel = JPanel(BorderLayout(JBUI.scale(10), 0))
-        rowPanel.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(35))
-        rowPanel.border = JBUI.Borders.emptyBottom(5)
-
-        // Language label
-        val langName = LANGUAGE_NAMES[lang] ?: lang.uppercase()
-        val label = JBLabel("$langName ($lang):")
-        label.preferredSize = Dimension(JBUI.scale(120), JBUI.scale(25))
-        rowPanel.add(label, BorderLayout.WEST)
-
-        // Text field
+    private fun addLanguageRow(panel: JPanel, lang: String, isSource: Boolean, gbc: GridBagConstraints, row: Int) {
         val entry = translations[lang]
-        val textField = JBTextField(entry?.value ?: "")
-        textField.columns = 40
-        textFields[lang] = textField
+        val langName = LANGUAGE_NAMES[lang] ?: lang.uppercase()
 
-        // Buttons panel
-        val buttonsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(5), 0))
-
-        if (!isSource) {
-            // Translate button for non-English languages
-            val translateBtn = JButton("Translate")
-            translateBtn.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(25))
-            translateBtn.addActionListener { translateSingleLanguage(lang) }
-            translateButtons[lang] = translateBtn
-            buttonsPanel.add(translateBtn)
+        // Column 0: Language label
+        gbc.apply {
+            gridx = 0
+            gridy = row
+            gridwidth = 1
+            weightx = 0.0
+            weighty = 0.0
+            fill = GridBagConstraints.NONE
+            anchor = GridBagConstraints.WEST
+            insets = JBUI.insets(2, 0, 2, 8)
         }
 
-        // Status indicator
+        val labelPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        val label = JBLabel("$langName ($lang)")
+        label.preferredSize = Dimension(JBUI.scale(110), JBUI.scale(24))
+        if (isSource) {
+            label.font = label.font.deriveFont(Font.BOLD)
+        }
+        labelPanel.add(label)
+
+        // Status indicator (inline with label)
         if (entry?.exists == true) {
             val existsLabel = JBLabel("✓")
-            existsLabel.foreground = Color(100, 180, 100)
-            existsLabel.toolTipText = "Key exists in this language"
-            buttonsPanel.add(existsLabel)
+            existsLabel.foreground = JBColor(Color(60, 150, 60), Color(100, 200, 100))
+            existsLabel.toolTipText = "Key exists in this language file"
+            labelPanel.add(existsLabel)
         } else if (entry?.file != null) {
-            val newLabel = JBLabel("NEW")
-            newLabel.foreground = Color(200, 150, 50)
-            newLabel.toolTipText = "Key will be created in this language"
-            buttonsPanel.add(newLabel)
+            val newLabel = JBLabel("new")
+            newLabel.font = newLabel.font.deriveFont(Font.ITALIC, newLabel.font.size - 1f)
+            newLabel.foreground = JBColor(Color(180, 130, 40), Color(220, 180, 80))
+            newLabel.toolTipText = "Key will be created when you save"
+            labelPanel.add(newLabel)
         }
 
-        val centerPanel = JPanel(BorderLayout())
-        centerPanel.add(textField, BorderLayout.CENTER)
-        centerPanel.add(buttonsPanel, BorderLayout.EAST)
+        panel.add(labelPanel, gbc)
 
-        rowPanel.add(centerPanel, BorderLayout.CENTER)
-        panel.add(rowPanel)
+        // Column 1: Text field
+        gbc.apply {
+            gridx = 1
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(2, 0, 2, 8)
+        }
+        val textField = JBTextField(entry?.value ?: "")
+        textField.preferredSize = Dimension(JBUI.scale(350), JBUI.scale(28))
+        if (isSource) {
+            textField.toolTipText = "Source text (English) - other languages translate from this"
+        }
+        textFields[lang] = textField
+        panel.add(textField, gbc)
+
+        // Column 2: Translate button (for non-English)
+        gbc.apply {
+            gridx = 2
+            weightx = 0.0
+            fill = GridBagConstraints.NONE
+            insets = JBUI.insets(2, 0, 2, 0)
+        }
+
+        if (!isSource) {
+            val translateBtn = JButton("Translate")
+            translateBtn.preferredSize = Dimension(JBUI.scale(85), JBUI.scale(26))
+            translateBtn.toolTipText = "Translate from English using Google Translate"
+            translateBtn.addActionListener { translateSingleLanguage(lang) }
+            translateButtons[lang] = translateBtn
+            panel.add(translateBtn, gbc)
+        } else {
+            // Add placeholder for alignment
+            val placeholder = JPanel()
+            placeholder.preferredSize = Dimension(JBUI.scale(85), JBUI.scale(26))
+            panel.add(placeholder, gbc)
+        }
     }
 
     private fun translateSingleLanguage(targetLang: String) {

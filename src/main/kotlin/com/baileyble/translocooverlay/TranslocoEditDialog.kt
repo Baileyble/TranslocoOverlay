@@ -43,7 +43,7 @@ class TranslocoEditDialog(
     private val project: Project,
     private val translationKey: String,
     private val existingLocations: MutableList<TranslationLocation>,
-    private val availableLocations: List<TranslationLocation>
+    private val availableLocations: MutableList<TranslationLocation>
 ) : DialogWrapper(project, true) {
 
     companion object {
@@ -97,8 +97,8 @@ class TranslocoEditDialog(
 
     // Text fields per location index and language
     private val locationTextFields = mutableMapOf<Int, MutableMap<String, JBTextField>>()
-    private var tabbedPane: JBTabbedPane? = null
-    private var mainPanel: JPanel? = null
+    private lateinit var tabbedPane: JBTabbedPane
+    private lateinit var mainPanel: JPanel
     private var contentPanel: JComponent? = null
 
     init {
@@ -126,21 +126,25 @@ class TranslocoEditDialog(
 
     override fun createCenterPanel(): JComponent {
         mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
-        mainPanel!!.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(500))
-        mainPanel!!.border = JBUI.Borders.empty(8)
+        mainPanel.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(500))
+        mainPanel.border = JBUI.Borders.empty(8)
 
         // Header with key info
         val headerPanel = createHeaderPanel()
-        mainPanel!!.add(headerPanel, BorderLayout.NORTH)
+        mainPanel.add(headerPanel, BorderLayout.NORTH)
 
         // Content
         rebuildContent()
 
-        return mainPanel!!
+        return mainPanel
     }
 
     private fun rebuildContent() {
-        contentPanel?.let { mainPanel?.remove(it) }
+        contentPanel?.let {
+            if (::mainPanel.isInitialized) {
+                mainPanel.remove(it)
+            }
+        }
 
         contentPanel = when {
             existingLocations.size > 1 || (existingLocations.size == 1 && availableLocations.isNotEmpty()) -> {
@@ -167,9 +171,13 @@ class TranslocoEditDialog(
             }
         }
 
-        mainPanel!!.add(contentPanel!!, BorderLayout.CENTER)
-        mainPanel!!.revalidate()
-        mainPanel!!.repaint()
+        contentPanel?.let { panel ->
+            if (::mainPanel.isInitialized) {
+                mainPanel.add(panel, BorderLayout.CENTER)
+                mainPanel.revalidate()
+                mainPanel.repaint()
+            }
+        }
     }
 
     private fun createHeaderPanel(): JPanel {
@@ -204,31 +212,31 @@ class TranslocoEditDialog(
 
         existingLocations.forEachIndexed { index, location ->
             val panel = createSingleLocationPanel(index, location)
-            tabbedPane!!.addTab(location.displayPath, panel)
-            tabbedPane!!.setToolTipTextAt(index, location.fullPath)
+            tabbedPane.addTab(location.displayPath, panel)
+            tabbedPane.setToolTipTextAt(index, location.fullPath)
 
             // Add custom tab component with close button (only if key exists in the file)
             if (!location.isNewKey) {
                 val tabComponent = createTabComponentWithClose(location.displayPath, index, location)
-                tabbedPane!!.setTabComponentAt(index, tabComponent)
+                tabbedPane.setTabComponentAt(index, tabComponent)
             }
         }
 
         // Add "+" tab for adding new locations
         if (availableLocations.isNotEmpty()) {
             val plusPanel = JPanel()
-            tabbedPane!!.addTab("+", plusPanel)
-            val plusIndex = tabbedPane!!.tabCount - 1
-            tabbedPane!!.setToolTipTextAt(plusIndex, "Add to another location...")
+            tabbedPane.addTab("+", plusPanel)
+            val plusIndex = tabbedPane.tabCount - 1
+            tabbedPane.setToolTipTextAt(plusIndex, "Add to another location...")
 
             // Handle click on "+" tab
-            tabbedPane!!.addChangeListener { e ->
-                if (tabbedPane!!.selectedIndex == plusIndex) {
+            tabbedPane.addChangeListener {
+                if (::tabbedPane.isInitialized && tabbedPane.selectedIndex == plusIndex) {
                     // Revert to previous tab immediately
                     val prevTab = if (plusIndex > 0) plusIndex - 1 else 0
                     SwingUtilities.invokeLater {
-                        if (existingLocations.isNotEmpty()) {
-                            tabbedPane!!.selectedIndex = prevTab
+                        if (existingLocations.isNotEmpty() && ::tabbedPane.isInitialized) {
+                            tabbedPane.selectedIndex = prevTab
                         }
                         showLocationSelector(tabbedPane)
                     }
@@ -236,7 +244,7 @@ class TranslocoEditDialog(
             }
         }
 
-        return tabbedPane!!
+        return tabbedPane
     }
 
     /**
@@ -324,7 +332,7 @@ class TranslocoEditDialog(
 
         // Add to available if not already there
         if (availableLocations.none { it.fullPath == location.fullPath }) {
-            (availableLocations as? MutableList)?.add(availableLocation)
+            availableLocations.add(availableLocation)
         }
 
         // Rebuild UI

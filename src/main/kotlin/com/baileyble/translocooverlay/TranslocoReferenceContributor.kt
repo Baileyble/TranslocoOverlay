@@ -54,7 +54,6 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
 
     companion object {
         private val LOG = Logger.getInstance(TranslocoReferenceProvider::class.java)
-        private var loggedOnce = false
     }
 
     override fun getReferencesByElement(
@@ -68,12 +67,6 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
         val fileName = file.name.lowercase()
         if (!fileName.endsWith(".html")) {
             return PsiReference.EMPTY_ARRAY
-        }
-
-        // Log first HTML file we encounter
-        if (!loggedOnce) {
-            LOG.debug("TRANSLOCO: First HTML file encountered: ${file.name}")
-            loggedOnce = true
         }
 
         // Check if this is a transloco-related element

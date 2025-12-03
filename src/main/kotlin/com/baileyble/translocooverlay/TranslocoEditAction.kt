@@ -89,7 +89,7 @@ object TranslocoEditUtil {
                     project = project,
                     translationKey = key,
                     existingLocations = existingLocations.toMutableList(),
-                    availableLocations = availableLocations
+                    availableLocations = availableLocations.toMutableList()
                 )
                 dialog.show()
             }

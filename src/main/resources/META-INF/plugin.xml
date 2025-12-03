@@ -82,13 +82,5 @@
                 description="Toggle inline display of translation values">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
-
-        <!-- Maintenance dialog action -->
-        <action id="Transloco.Maintenance"
-                class="com.baileyble.translocooverlay.TranslocoMaintenanceAction"
-                text="Transloco Maintenance"
-                description="Scan for unused, missing, and duplicate translations">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
     </actions>
 </idea-plugin>

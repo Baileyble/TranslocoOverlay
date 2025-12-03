@@ -4,10 +4,14 @@ import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
 import com.intellij.json.psi.JsonFile
+import com.intellij.json.psi.JsonProperty
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
+import com.intellij.psi.search.FilenameIndex
+import com.intellij.psi.search.GlobalSearchScope
 
 /**
  * Handles Ctrl+Click navigation for Transloco translation keys.
@@ -66,7 +70,12 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         val file = sourceElement.containingFile ?: return null
         val fileName = file.name.lowercase()
 
-        // Only handle HTML files
+        // Handle JSON files - find usages in templates
+        if (fileName.endsWith(".json") && isTranslationFile(file.virtualFile)) {
+            return findUsagesInTemplates(sourceElement)
+        }
+
+        // Only handle HTML files for template -> JSON navigation
         if (!fileName.endsWith(".html")) {
             return null
         }
@@ -372,5 +381,176 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         }
 
         return targets
+    }
+
+    /**
+     * Check if the given file is a translation file.
+     */
+    private fun isTranslationFile(virtualFile: VirtualFile?): Boolean {
+        if (virtualFile == null) return false
+        val path = virtualFile.path.lowercase()
+        return path.contains("i18n") || path.contains("locale") || path.contains("translations")
+    }
+
+    /**
+     * Find usages of the JSON key in HTML templates.
+     */
+    private fun findUsagesInTemplates(element: PsiElement): Array<PsiElement>? {
+        val jsonProperty = getJsonProperty(element) ?: return null
+        val project = element.project
+
+        // Build the full key path
+        val keyPath = buildKeyPath(jsonProperty)
+        if (keyPath.isBlank()) return null
+
+        LOG.warn("TRANSLOCO-USAGES: Looking for usages of key '$keyPath'")
+
+        // Determine if this is a scoped file
+        val file = element.containingFile?.virtualFile ?: return null
+        val scopePrefix = getScopeFromFilePath(file.path)
+
+        val usages = mutableListOf<PsiElement>()
+
+        // Search in all HTML files
+        val htmlFiles = FilenameIndex.getAllFilesByExt(project, "html", GlobalSearchScope.projectScope(project))
+
+        for (htmlFile in htmlFiles) {
+            val psiFile = PsiManager.getInstance(project).findFile(htmlFile) ?: continue
+            val text = psiFile.text
+
+            // Search for the key in various patterns
+            val searchKeys = mutableListOf(keyPath)
+            if (scopePrefix != null) {
+                searchKeys.add("$scopePrefix.$keyPath")
+            }
+
+            for (searchKey in searchKeys) {
+                // Check for pipe syntax: 'key' | transloco
+                if (text.contains("'$searchKey'") || text.contains("\"$searchKey\"")) {
+                    // Find the exact position(s) of the key
+                    findKeyOccurrences(psiFile, searchKey).forEach { occurrence ->
+                        usages.add(occurrence)
+                    }
+                }
+            }
+        }
+
+        // Also search TypeScript files for service usage
+        val tsFiles = FilenameIndex.getAllFilesByExt(project, "ts", GlobalSearchScope.projectScope(project))
+        for (tsFile in tsFiles) {
+            val psiFile = PsiManager.getInstance(project).findFile(tsFile) ?: continue
+            val text = psiFile.text
+
+            val searchKeys = mutableListOf(keyPath)
+            if (scopePrefix != null) {
+                searchKeys.add("$scopePrefix.$keyPath")
+            }
+
+            for (searchKey in searchKeys) {
+                if (text.contains("'$searchKey'") || text.contains("\"$searchKey\"")) {
+                    findKeyOccurrences(psiFile, searchKey).forEach { occurrence ->
+                        usages.add(occurrence)
+                    }
+                }
+            }
+        }
+
+        LOG.warn("TRANSLOCO-USAGES: Found ${usages.size} usages for key '$keyPath'")
+
+        return if (usages.isNotEmpty()) usages.toTypedArray() else null
+    }
+
+    /**
+     * Get the scope prefix from the file path (for scoped translations).
+     */
+    private fun getScopeFromFilePath(path: String): String? {
+        // Look for patterns like /eligibility/i18n/en.json -> scope = "eligibility"
+        val parts = path.replace("\\", "/").split("/")
+        val i18nIndex = parts.indexOfFirst { it.equals("i18n", ignoreCase = true) }
+
+        if (i18nIndex > 0) {
+            val potentialScope = parts[i18nIndex - 1]
+            // Make sure it's not a common folder name
+            if (potentialScope !in listOf("assets", "src", "app", "libs", "apps")) {
+                return potentialScope
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Find occurrences of a key in a PSI file.
+     */
+    private fun findKeyOccurrences(file: com.intellij.psi.PsiFile, key: String): List<PsiElement> {
+        val occurrences = mutableListOf<PsiElement>()
+        val text = file.text
+
+        // Find all occurrences of the key
+        var index = 0
+        while (true) {
+            val singleQuotePattern = "'$key'"
+            val doubleQuotePattern = "\"$key\""
+
+            val singleIndex = text.indexOf(singleQuotePattern, index)
+            val doubleIndex = text.indexOf(doubleQuotePattern, index)
+
+            val foundIndex = when {
+                singleIndex >= 0 && doubleIndex >= 0 -> minOf(singleIndex, doubleIndex)
+                singleIndex >= 0 -> singleIndex
+                doubleIndex >= 0 -> doubleIndex
+                else -> -1
+            }
+
+            if (foundIndex < 0) break
+
+            // Find the PSI element at this offset
+            val element = file.findElementAt(foundIndex + 1) // +1 to get inside the string
+            if (element != null) {
+                occurrences.add(element)
+            }
+
+            index = foundIndex + 1
+        }
+
+        return occurrences
+    }
+
+    /**
+     * Build the full key path from a JSON property.
+     */
+    private fun buildKeyPath(property: JsonProperty): String {
+        val parts = mutableListOf<String>()
+        var current: PsiElement? = property
+
+        while (current != null) {
+            if (current is JsonProperty) {
+                parts.add(0, current.name)
+            }
+            current = current.parent
+
+            // Stop at the file level or JsonFile
+            if (current is JsonFile || current == null) break
+        }
+
+        return parts.joinToString(".")
+    }
+
+    /**
+     * Get the JsonProperty from an element (handles clicking on key or value).
+     */
+    private fun getJsonProperty(element: PsiElement): JsonProperty? {
+        var current: PsiElement? = element
+        var depth = 0
+
+        while (current != null && depth < 10) {
+            if (current is JsonProperty) {
+                return current
+            }
+            current = current.parent
+            depth++
+        }
+
+        return null
     }
 }

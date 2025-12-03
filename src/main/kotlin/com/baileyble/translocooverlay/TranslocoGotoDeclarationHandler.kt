@@ -415,17 +415,29 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
     /**
      * Find usages of the JSON key in HTML templates.
      * Shows a custom popup with clear file context when multiple usages are found.
+     * Always returns emptyArray() (not null) for JSON files to prevent IntelliJ's default handler.
      */
-    private fun findUsagesInTemplates(element: PsiElement): Array<PsiElement>? {
-        val jsonProperty = getJsonProperty(element) ?: return null
+    private fun findUsagesInTemplates(element: PsiElement): Array<PsiElement> {
+        val jsonProperty = getJsonProperty(element)
+        if (jsonProperty == null) {
+            LOG.debug("TRANSLOCO-USAGES: Not a JSON property, skipping")
+            return emptyArray()
+        }
         val project = element.project
 
         // Build the full key path
         val keyPath = buildKeyPath(jsonProperty)
-        if (keyPath.isBlank()) return null
+        if (keyPath.isBlank()) {
+            LOG.debug("TRANSLOCO-USAGES: Empty key path, skipping")
+            return emptyArray()
+        }
 
         // Determine if this is a scoped file
-        val sourceFile = element.containingFile?.virtualFile ?: return null
+        val sourceFile = element.containingFile?.virtualFile
+        if (sourceFile == null) {
+            LOG.debug("TRANSLOCO-USAGES: No source file, skipping")
+            return emptyArray()
+        }
         val scopePrefix = getScopeFromFilePath(sourceFile.path)
 
         LOG.debug("TRANSLOCO-USAGES: Looking for usages of key '$keyPath' (scope: $scopePrefix)")

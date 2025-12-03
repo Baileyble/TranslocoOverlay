@@ -204,9 +204,14 @@ class TranslocoEditDialog(
 
         existingLocations.forEachIndexed { index, location ->
             val panel = createSingleLocationPanel(index, location)
-            val tabTitle = location.displayPath
-            tabbedPane!!.addTab(tabTitle, panel)
+            tabbedPane!!.addTab(location.displayPath, panel)
             tabbedPane!!.setToolTipTextAt(index, location.fullPath)
+
+            // Add custom tab component with close button (only if key exists in the file)
+            if (!location.isNewKey) {
+                val tabComponent = createTabComponentWithClose(location.displayPath, index, location)
+                tabbedPane!!.setTabComponentAt(index, tabComponent)
+            }
         }
 
         // Add "+" tab for adding new locations
@@ -232,6 +237,149 @@ class TranslocoEditDialog(
         }
 
         return tabbedPane!!
+    }
+
+    /**
+     * Creates a tab component with title and close button.
+     */
+    private fun createTabComponentWithClose(title: String, tabIndex: Int, location: TranslationLocation): JComponent {
+        val tabPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
+        tabPanel.isOpaque = false
+
+        // Title label
+        val titleLabel = JBLabel(title)
+        titleLabel.border = JBUI.Borders.emptyRight(8)
+        tabPanel.add(titleLabel)
+
+        // Close button
+        val closeButton = JButton("×")
+        closeButton.preferredSize = Dimension(JBUI.scale(18), JBUI.scale(18))
+        closeButton.margin = JBUI.emptyInsets()
+        closeButton.isFocusable = false
+        closeButton.isContentAreaFilled = false
+        closeButton.isBorderPainted = false
+        closeButton.font = closeButton.font.deriveFont(Font.BOLD, 14f)
+        closeButton.foreground = JBColor.GRAY
+        closeButton.toolTipText = "Delete translation from this location"
+
+        // Hover effect
+        closeButton.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseEntered(e: java.awt.event.MouseEvent) {
+                closeButton.foreground = JBColor.RED
+            }
+            override fun mouseExited(e: java.awt.event.MouseEvent) {
+                closeButton.foreground = JBColor.GRAY
+            }
+        })
+
+        // Click handler with confirmation
+        closeButton.addActionListener {
+            confirmAndDeleteTranslation(location)
+        }
+
+        tabPanel.add(closeButton)
+        return tabPanel
+    }
+
+    /**
+     * Shows confirmation dialog and deletes translation if confirmed.
+     */
+    private fun confirmAndDeleteTranslation(location: TranslationLocation) {
+        val result = Messages.showYesNoDialog(
+            project,
+            "Are you sure you want to delete the translation key '${location.keyInFile}' from:\n\n${location.fullPath}\n\nThis action cannot be undone.",
+            "Delete Translation",
+            "Delete",
+            "Cancel",
+            Messages.getWarningIcon()
+        )
+
+        if (result == Messages.YES) {
+            deleteTranslationFromLocation(location)
+        }
+    }
+
+    /**
+     * Deletes the translation key from all language files in the location.
+     */
+    private fun deleteTranslationFromLocation(location: TranslationLocation) {
+        WriteCommandAction.runWriteCommandAction(project, "Delete Translation", null, {
+            for ((_, entry) in location.translations) {
+                if (entry.exists && entry.file != null) {
+                    deleteTranslationFromFile(entry.file, location.keyInFile)
+                }
+            }
+        })
+
+        // Remove from existing locations and move to available
+        existingLocations.remove(location)
+
+        // Create a new "available" location (with isNewKey = true)
+        val availableLocation = location.copy(
+            isNewKey = true,
+            translations = location.translations.mapValues {
+                TranslationEntry("", it.value.file, false)
+            }.toMutableMap()
+        )
+
+        // Add to available if not already there
+        if (availableLocations.none { it.fullPath == location.fullPath }) {
+            (availableLocations as? MutableList)?.add(availableLocation)
+        }
+
+        // Rebuild UI
+        locationTextFields.clear()
+        rebuildContent()
+
+        // Show confirmation
+        Messages.showInfoMessage(
+            project,
+            "Translation deleted successfully from ${location.displayPath}",
+            "Translation Deleted"
+        )
+    }
+
+    /**
+     * Deletes a translation key from a JSON file.
+     */
+    private fun deleteTranslationFromFile(file: VirtualFile, keyPath: String) {
+        val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: return
+        val navResult = JsonKeyNavigator.navigateToKey(psiFile, keyPath)
+
+        if (navResult.found && navResult.property != null) {
+            // Delete the property
+            navResult.property.delete()
+            LOG.warn("TRANSLOCO-EDIT: Deleted '$keyPath' from ${file.name}")
+
+            // Clean up empty parent objects
+            cleanupEmptyParents(psiFile, keyPath)
+        }
+    }
+
+    /**
+     * Removes empty parent objects after deleting a key.
+     */
+    private fun cleanupEmptyParents(psiFile: JsonFile, keyPath: String) {
+        val parts = keyPath.split(".")
+        if (parts.size <= 1) return
+
+        // Check each parent level from innermost to outermost
+        for (i in parts.size - 2 downTo 0) {
+            val parentPath = parts.take(i + 1).joinToString(".")
+            val parentResult = JsonKeyNavigator.navigateToKey(psiFile, parentPath)
+
+            if (parentResult.found && parentResult.value is JsonObject) {
+                val parentObj = parentResult.value as JsonObject
+                // If the object is empty (only has braces), delete it
+                if (parentObj.propertyList.isEmpty() && parentResult.property != null) {
+                    parentResult.property.delete()
+                    LOG.warn("TRANSLOCO-EDIT: Cleaned up empty parent '$parentPath' from ${psiFile.name}")
+                } else {
+                    // Parent is not empty, stop cleaning
+                    break
+                }
+            }
+        }
     }
 
     private fun showLocationSelector(relativeTo: JComponent?) {

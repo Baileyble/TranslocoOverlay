@@ -13,10 +13,13 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiManager
 import com.intellij.ui.JBColor
+import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextField
@@ -27,24 +30,28 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.prefs.Preferences
 import javax.swing.*
 
 /**
  * Dialog for editing Transloco translations across all languages.
  * Features:
- * - Tabbed interface for multiple file locations
- * - View/edit all language translations for a key
- * - Create new keys if they don't exist
+ * - Tabbed interface showing only locations where key exists
+ * - "+" tab to add key to new file locations
+ * - Remembers last used file location
  * - Google Translate integration for auto-translation
  */
 class TranslocoEditDialog(
     private val project: Project,
     private val translationKey: String,
-    private val locations: List<TranslationLocation>
+    private val existingLocations: MutableList<TranslationLocation>,
+    private val availableLocations: List<TranslationLocation>
 ) : DialogWrapper(project, true) {
 
     companion object {
         private val LOG = Logger.getInstance(TranslocoEditDialog::class.java)
+        private val PREFS = Preferences.userNodeForPackage(TranslocoEditDialog::class.java)
+        private const val LAST_LOCATION_KEY = "lastTranslationLocation"
 
         // Common languages to show
         private val COMMON_LANGUAGES = listOf("en", "es", "fr", "de", "it", "pt", "zh", "ja", "ko", "ru")
@@ -68,6 +75,9 @@ class TranslocoEditDialog(
             "tr" to "Turkish",
             "vi" to "Vietnamese"
         )
+
+        fun getLastUsedLocation(): String? = PREFS.get(LAST_LOCATION_KEY, null)
+        fun setLastUsedLocation(path: String) = PREFS.put(LAST_LOCATION_KEY, path)
     }
 
     /**
@@ -87,38 +97,70 @@ class TranslocoEditDialog(
         val exists: Boolean
     )
 
-    // Text fields per location and language
+    // Text fields per location index and language
     private val locationTextFields = mutableMapOf<Int, MutableMap<String, JBTextField>>()
     private var tabbedPane: JBTabbedPane? = null
+    private var mainPanel: JPanel? = null
+    private var contentPanel: JComponent? = null
 
     init {
-        title = "Edit Translation: $translationKey"
+        title = if (existingLocations.isEmpty()) "Create Translation: $translationKey" else "Edit Translation: $translationKey"
         init()
+
+        // If no existing locations, prompt to select one
+        if (existingLocations.isEmpty() && availableLocations.isNotEmpty()) {
+            SwingUtilities.invokeLater {
+                showLocationSelector(null)
+            }
+        }
     }
 
     override fun createCenterPanel(): JComponent {
-        val mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
-        mainPanel.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(500))
-        mainPanel.border = JBUI.Borders.empty(8)
+        mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
+        mainPanel!!.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(500))
+        mainPanel!!.border = JBUI.Borders.empty(8)
 
         // Header with key info
         val headerPanel = createHeaderPanel()
-        mainPanel.add(headerPanel, BorderLayout.NORTH)
+        mainPanel!!.add(headerPanel, BorderLayout.NORTH)
 
-        // Content - either tabs or single panel
-        val contentPanel = if (locations.size > 1) {
-            createTabbedContent()
-        } else if (locations.isNotEmpty()) {
-            createSingleLocationPanel(0, locations[0])
-        } else {
-            JPanel().apply {
-                add(JBLabel("No translation files found"))
+        // Content
+        rebuildContent()
+
+        return mainPanel!!
+    }
+
+    private fun rebuildContent() {
+        contentPanel?.let { mainPanel?.remove(it) }
+
+        contentPanel = when {
+            existingLocations.size > 1 || (existingLocations.size == 1 && availableLocations.isNotEmpty()) -> {
+                createTabbedContent()
+            }
+            existingLocations.size == 1 -> {
+                createSingleLocationPanel(0, existingLocations[0])
+            }
+            else -> {
+                // No locations yet - show placeholder
+                JPanel(BorderLayout()).apply {
+                    val label = JBLabel("Select a location to add this translation key")
+                    label.horizontalAlignment = SwingConstants.CENTER
+                    add(label, BorderLayout.CENTER)
+
+                    if (availableLocations.isNotEmpty()) {
+                        val selectButton = JButton("Select Location...")
+                        selectButton.addActionListener { showLocationSelector(null) }
+                        val buttonPanel = JPanel(FlowLayout(FlowLayout.CENTER))
+                        buttonPanel.add(selectButton)
+                        add(buttonPanel, BorderLayout.SOUTH)
+                    }
+                }
             }
         }
 
-        mainPanel.add(contentPanel, BorderLayout.CENTER)
-
-        return mainPanel
+        mainPanel!!.add(contentPanel!!, BorderLayout.CENTER)
+        mainPanel!!.revalidate()
+        mainPanel!!.repaint()
     }
 
     private fun createHeaderPanel(): JPanel {
@@ -145,30 +187,114 @@ class TranslocoEditDialog(
         keyPanel.add(keyValue)
         headerPanel.add(keyPanel, gbc)
 
-        // Show location count info if multiple
-        if (locations.size > 1) {
-            gbc.gridy = 1
-            gbc.insets = JBUI.insets(4, 0, 0, 0)
-            val infoLabel = JBLabel("Found in ${locations.size} locations - use tabs to switch between them")
-            infoLabel.foreground = JBColor(Color(100, 100, 140), Color(160, 160, 200))
-            infoLabel.font = infoLabel.font.deriveFont(Font.ITALIC)
-            headerPanel.add(infoLabel, gbc)
-        }
-
         return headerPanel
     }
 
     private fun createTabbedContent(): JComponent {
         tabbedPane = JBTabbedPane()
 
-        locations.forEachIndexed { index, location ->
+        existingLocations.forEachIndexed { index, location ->
             val panel = createSingleLocationPanel(index, location)
             val tabTitle = location.displayPath
             tabbedPane!!.addTab(tabTitle, panel)
             tabbedPane!!.setToolTipTextAt(index, location.fullPath)
         }
 
+        // Add "+" tab for adding new locations
+        if (availableLocations.isNotEmpty()) {
+            val plusPanel = JPanel()
+            tabbedPane!!.addTab("+", plusPanel)
+            val plusIndex = tabbedPane!!.tabCount - 1
+            tabbedPane!!.setToolTipTextAt(plusIndex, "Add to another location...")
+
+            // Handle click on "+" tab
+            tabbedPane!!.addChangeListener { e ->
+                if (tabbedPane!!.selectedIndex == plusIndex) {
+                    // Revert to previous tab immediately
+                    val prevTab = if (plusIndex > 0) plusIndex - 1 else 0
+                    SwingUtilities.invokeLater {
+                        if (existingLocations.isNotEmpty()) {
+                            tabbedPane!!.selectedIndex = prevTab
+                        }
+                        showLocationSelector(tabbedPane)
+                    }
+                }
+            }
+        }
+
         return tabbedPane!!
+    }
+
+    private fun showLocationSelector(relativeTo: Component?) {
+        if (availableLocations.isEmpty()) return
+
+        // Sort with last used location first
+        val lastUsed = getLastUsedLocation()
+        val sortedLocations = availableLocations.sortedWith(compareBy(
+            { it.fullPath != lastUsed },
+            { it.displayPath }
+        ))
+
+        val listModel = DefaultListModel<TranslationLocation>()
+        sortedLocations.forEach { listModel.addElement(it) }
+
+        val list = JBList(listModel)
+        list.cellRenderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean
+            ): Component {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                val location = value as? TranslationLocation
+                if (location != null) {
+                    text = location.displayPath
+                    toolTipText = location.fullPath
+                    if (location.fullPath == lastUsed) {
+                        text = "${location.displayPath} (last used)"
+                    }
+                }
+                return this
+            }
+        }
+
+        val popup = JBPopupFactory.getInstance()
+            .createListPopupBuilder(list)
+            .setTitle("Select Location")
+            .setItemChosenCallback { selected ->
+                if (selected is TranslationLocation) {
+                    addLocation(selected)
+                }
+            }
+            .createPopup()
+
+        if (relativeTo != null) {
+            popup.show(RelativePoint.getCenterOf(relativeTo))
+        } else {
+            popup.showCenteredInCurrentWindow(project)
+        }
+    }
+
+    private fun addLocation(location: TranslationLocation) {
+        // Remember this location
+        setLastUsedLocation(location.fullPath)
+
+        // Add to existing locations
+        existingLocations.add(location)
+
+        // Rebuild the UI
+        locationTextFields.clear()
+        rebuildContent()
+
+        // Select the new tab
+        tabbedPane?.let {
+            val newIndex = existingLocations.size - 1
+            if (newIndex < it.tabCount) {
+                it.selectedIndex = newIndex
+            }
+        }
     }
 
     private fun createSingleLocationPanel(locationIndex: Int, location: TranslationLocation): JComponent {
@@ -221,7 +347,7 @@ class TranslocoEditDialog(
         translationsPanel.add(JSeparator(), rowGbc)
 
         // Add English first (source for translations)
-        addLanguageRow(translationsPanel, "en", true, rowGbc, row++, translations, textFields)
+        addLanguageRow(translationsPanel, "en", true, rowGbc, row++, translations, textFields, location)
 
         // Add separator
         rowGbc.apply {
@@ -245,16 +371,17 @@ class TranslocoEditDialog(
         // Add other languages
         val otherLangs = translations.keys.filter { it != "en" }.sorted()
         for (lang in otherLangs) {
-            addLanguageRow(translationsPanel, lang, false, rowGbc, row++, translations, textFields)
+            addLanguageRow(translationsPanel, lang, false, rowGbc, row++, translations, textFields, location)
         }
 
-        // Add any common languages not already present
+        // Add any common languages not already present (only if files exist for this location)
         for (lang in COMMON_LANGUAGES) {
             if (lang != "en" && !translations.containsKey(lang)) {
-                val langFiles = TranslationFileFinder.findTranslationFilesForLanguage(project, lang)
-                if (langFiles.isNotEmpty()) {
-                    translations[lang] = TranslationEntry("", langFiles.first(), false)
-                    addLanguageRow(translationsPanel, lang, false, rowGbc, row++, translations, textFields)
+                // Try to find a file for this language in the same directory
+                val langFile = findLanguageFileInLocation(location, lang)
+                if (langFile != null) {
+                    translations[lang] = TranslationEntry("", langFile, false)
+                    addLanguageRow(translationsPanel, lang, false, rowGbc, row++, translations, textFields, location)
                 }
             }
         }
@@ -275,6 +402,15 @@ class TranslocoEditDialog(
         return scrollPane
     }
 
+    private fun findLanguageFileInLocation(location: TranslationLocation, lang: String): VirtualFile? {
+        // Get an existing file from this location to find the directory
+        val existingFile = location.translations.values.firstOrNull()?.file ?: return null
+        val directory = existingFile.parent ?: return null
+
+        // Look for the language file in the same directory
+        return directory.findChild("$lang.json")
+    }
+
     private fun addLanguageRow(
         panel: JPanel,
         lang: String,
@@ -282,7 +418,8 @@ class TranslocoEditDialog(
         gbc: GridBagConstraints,
         row: Int,
         translations: MutableMap<String, TranslationEntry>,
-        textFields: MutableMap<String, JBTextField>
+        textFields: MutableMap<String, JBTextField>,
+        location: TranslationLocation
     ) {
         val entry = translations[lang]
         val langName = LANGUAGE_NAMES[lang] ?: lang.uppercase()
@@ -471,8 +608,11 @@ class TranslocoEditDialog(
     override fun doOKAction() {
         // Save translations for all locations
         WriteCommandAction.runWriteCommandAction(project, "Update Translations", null, {
-            locations.forEachIndexed { index, location ->
+            existingLocations.forEachIndexed { index, location ->
                 val textFields = locationTextFields[index] ?: return@forEachIndexed
+
+                // Remember this location as last used
+                setLastUsedLocation(location.fullPath)
 
                 for ((lang, textField) in textFields) {
                     val newValue = textField.text

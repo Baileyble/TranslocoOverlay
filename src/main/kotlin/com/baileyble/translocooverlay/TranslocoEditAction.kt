@@ -38,14 +38,15 @@ object TranslocoEditUtil {
         LOG.warn("TRANSLOCO-EDIT: Opening editor for key '$key'")
 
         // Find all translation locations for this key
-        val locations = findAllTranslationLocations(project, key)
+        val (existingLocations, availableLocations) = findAllTranslationLocations(project, key)
 
         // Show dialog on EDT
         ApplicationManager.getApplication().invokeLater({
             val dialog = TranslocoEditDialog(
                 project = project,
                 translationKey = key,
-                locations = locations
+                existingLocations = existingLocations.toMutableList(),
+                availableLocations = availableLocations
             )
 
             dialog.show()
@@ -54,13 +55,14 @@ object TranslocoEditUtil {
 
     /**
      * Find all translation locations for a key across different file locations.
-     * Returns a list of TranslationLocation objects, each representing a different i18n folder.
+     * Returns a pair of (existing locations where key exists, available locations where key could be added).
      */
     private fun findAllTranslationLocations(
         project: Project,
         key: String
-    ): List<TranslocoEditDialog.TranslationLocation> {
-        val locations = mutableListOf<TranslocoEditDialog.TranslationLocation>()
+    ): Pair<List<TranslocoEditDialog.TranslationLocation>, List<TranslocoEditDialog.TranslationLocation>> {
+        val existingLocations = mutableListOf<TranslocoEditDialog.TranslationLocation>()
+        val availableLocations = mutableListOf<TranslocoEditDialog.TranslationLocation>()
         val processedPaths = mutableSetOf<String>()
 
         LOG.warn("TRANSLOCO-EDIT: Finding all locations for key '$key'")
@@ -98,15 +100,19 @@ object TranslocoEditUtil {
 
                 if (translations.isNotEmpty()) {
                     val displayPath = getDisplayPath(path, project)
-                    locations.add(
-                        TranslocoEditDialog.TranslationLocation(
-                            displayPath = displayPath,
-                            fullPath = path,
-                            keyInFile = keyWithoutScope,
-                            translations = translations,
-                            isNewKey = !foundAny
-                        )
+                    val location = TranslocoEditDialog.TranslationLocation(
+                        displayPath = displayPath,
+                        fullPath = path,
+                        keyInFile = keyWithoutScope,
+                        translations = translations,
+                        isNewKey = !foundAny
                     )
+
+                    if (foundAny) {
+                        existingLocations.add(location)
+                    } else {
+                        availableLocations.add(location)
+                    }
                 }
             }
         }
@@ -137,15 +143,19 @@ object TranslocoEditUtil {
 
             if (translations.isNotEmpty()) {
                 val displayPath = getDisplayPath(path, project)
-                locations.add(
-                    TranslocoEditDialog.TranslationLocation(
-                        displayPath = displayPath,
-                        fullPath = path,
-                        keyInFile = key,
-                        translations = translations,
-                        isNewKey = !foundAny
-                    )
+                val location = TranslocoEditDialog.TranslationLocation(
+                    displayPath = displayPath,
+                    fullPath = path,
+                    keyInFile = key,
+                    translations = translations,
+                    isNewKey = !foundAny
                 )
+
+                if (foundAny) {
+                    existingLocations.add(location)
+                } else {
+                    availableLocations.add(location)
+                }
             }
         }
 
@@ -173,26 +183,34 @@ object TranslocoEditUtil {
                 }
             }
 
-            // Only add if we found actual translations here
-            if (foundAny && translations.isNotEmpty()) {
+            if (translations.isNotEmpty()) {
                 val displayPath = getDisplayPath(path, project)
-                locations.add(
-                    TranslocoEditDialog.TranslationLocation(
-                        displayPath = displayPath,
-                        fullPath = path,
-                        keyInFile = key,
-                        translations = translations,
-                        isNewKey = false
-                    )
+                val location = TranslocoEditDialog.TranslationLocation(
+                    displayPath = displayPath,
+                    fullPath = path,
+                    keyInFile = key,
+                    translations = translations,
+                    isNewKey = !foundAny
                 )
+
+                if (foundAny) {
+                    existingLocations.add(location)
+                } else {
+                    availableLocations.add(location)
+                }
             }
         }
 
-        // Sort: locations with existing keys first, then by path
-        val sorted = locations.sortedWith(compareBy({ it.isNewKey }, { it.displayPath }))
+        // Sort: existing by path, available with last used first
+        val sortedExisting = existingLocations.sortedBy { it.displayPath }
+        val lastUsed = TranslocoEditDialog.getLastUsedLocation()
+        val sortedAvailable = availableLocations.sortedWith(compareBy(
+            { it.fullPath != lastUsed },
+            { it.displayPath }
+        ))
 
-        LOG.warn("TRANSLOCO-EDIT: Found ${sorted.size} locations for key '$key'")
-        return sorted
+        LOG.warn("TRANSLOCO-EDIT: Found ${sortedExisting.size} existing, ${sortedAvailable.size} available locations for key '$key'")
+        return Pair(sortedExisting, sortedAvailable)
     }
 
     /**

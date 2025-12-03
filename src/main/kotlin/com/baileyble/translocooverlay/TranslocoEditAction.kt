@@ -5,7 +5,11 @@ import com.baileyble.translocooverlay.util.TranslationFileFinder
 import com.intellij.json.psi.JsonFile
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
@@ -64,20 +68,32 @@ object TranslocoEditUtil {
 
         LOG.debug("TRANSLOCO-EDIT: Opening editor for key '$key'")
 
-        // Find all translation locations for this key
-        val (existingLocations, availableLocations) = findAllTranslationLocations(project, key)
+        // Run file search in background thread to avoid EDT slow operation errors
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Finding translations...", false) {
+            private var existingLocations: List<TranslocoEditDialog.TranslationLocation> = emptyList()
+            private var availableLocations: List<TranslocoEditDialog.TranslationLocation> = emptyList()
 
-        // Show dialog on EDT
-        ApplicationManager.getApplication().invokeLater({
-            val dialog = TranslocoEditDialog(
-                project = project,
-                translationKey = key,
-                existingLocations = existingLocations.toMutableList(),
-                availableLocations = availableLocations
-            )
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = true
+                // Find all translation locations in read action
+                val result = ReadAction.compute<Pair<List<TranslocoEditDialog.TranslationLocation>, List<TranslocoEditDialog.TranslationLocation>>, Throwable> {
+                    findAllTranslationLocations(project, key)
+                }
+                existingLocations = result.first
+                availableLocations = result.second
+            }
 
-            dialog.show()
-        }, ModalityState.defaultModalityState())
+            override fun onSuccess() {
+                // Show dialog on EDT after background work completes
+                val dialog = TranslocoEditDialog(
+                    project = project,
+                    translationKey = key,
+                    existingLocations = existingLocations.toMutableList(),
+                    availableLocations = availableLocations
+                )
+                dialog.show()
+            }
+        })
     }
 
     /**

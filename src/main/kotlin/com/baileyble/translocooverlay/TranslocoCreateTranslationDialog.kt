@@ -15,6 +15,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -35,6 +36,8 @@ import javax.swing.*
  * Dialog for creating a new Transloco translation from selected text in the template.
  * Features:
  * - Key name input field for the new translation key
+ * - Translation method selector (Pipe or Directive)
+ * - Automatic detection of existing *transloco directive context
  * - English value pre-filled with the selected text
  * - Other language inputs with translate buttons
  * - Location selector for choosing where to create the translation
@@ -52,6 +55,7 @@ class TranslocoCreateTranslationDialog(
         private val LOG = Logger.getInstance(TranslocoCreateTranslationDialog::class.java)
         private val PREFS = Preferences.userNodeForPackage(TranslocoCreateTranslationDialog::class.java)
         private const val LAST_LOCATION_KEY = "lastTranslationLocation"
+        private const val LAST_METHOD_KEY = "lastTranslationMethod"
 
         // Common languages to show
         private val COMMON_LANGUAGES = listOf("en", "es", "fr", "de", "it", "pt", "zh", "ja", "ko", "ru")
@@ -76,8 +80,15 @@ class TranslocoCreateTranslationDialog(
             "vi" to "Vietnamese"
         )
 
+        // Regex patterns for detecting transloco directives
+        private val STRUCTURAL_DIRECTIVE_PATTERN = Regex("""\*transloco\s*=\s*["']([^"']+)["']""")
+        private val LET_VAR_PATTERN = Regex("""let\s+(\w+)""")
+        private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
+
         fun getLastUsedLocation(): String? = PREFS.get(LAST_LOCATION_KEY, null)
         fun setLastUsedLocation(path: String) = PREFS.put(LAST_LOCATION_KEY, path)
+        fun getLastUsedMethod(): String = PREFS.get(LAST_METHOD_KEY, "pipe")
+        fun setLastUsedMethod(method: String) = PREFS.put(LAST_METHOD_KEY, method)
     }
 
     /**
@@ -89,6 +100,27 @@ class TranslocoCreateTranslationDialog(
         val files: Map<String, VirtualFile>  // lang -> file
     )
 
+    /**
+     * Represents detected transloco directive context from the template.
+     */
+    data class DirectiveContext(
+        val variableName: String,   // e.g., "t", "translate"
+        val scope: String?,         // e.g., "admin", "dashboard" (from read: 'scope')
+        val found: Boolean
+    ) {
+        companion object {
+            val NOT_FOUND = DirectiveContext("t", null, false)
+        }
+    }
+
+    /**
+     * Translation method options.
+     */
+    enum class TranslationMethod(val displayName: String, val description: String) {
+        PIPE("Pipe", "{{ 'key' | transloco }}"),
+        DIRECTIVE("Directive", "{{ t('key') }} with *transloco")
+    }
+
     private lateinit var keyTextField: JBTextField
     private val languageTextFields = mutableMapOf<String, JBTextField>()
     private var selectedLocation: TranslationLocation? = null
@@ -96,17 +128,75 @@ class TranslocoCreateTranslationDialog(
     private lateinit var locationButton: JButton
     private var availableLocations: List<TranslationLocation> = emptyList()
 
+    // Method selection
+    private lateinit var methodComboBox: JComboBox<TranslationMethod>
+    private lateinit var directiveInfoLabel: JBLabel
+    private lateinit var previewLabel: JBLabel
+    private var detectedContext: DirectiveContext = DirectiveContext.NOT_FOUND
+
     init {
         title = "Create Translation"
+
+        // Detect directive context before initializing UI
+        detectDirectiveContext()
+
         init()
 
         // Find available locations
         findAvailableLocations()
     }
 
+    /**
+     * Detect if there's an existing *transloco directive in the ancestor elements.
+     */
+    private fun detectDirectiveContext() {
+        val document = editor.document
+        val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document) ?: return
+        val element = psiFile.findElementAt(selectionStart) ?: return
+
+        detectedContext = findTranslocoDirectiveInAncestors(element)
+        LOG.debug("TRANSLOCO-CREATE: Detected directive context: $detectedContext")
+    }
+
+    /**
+     * Search up the PSI tree for a *transloco directive.
+     */
+    private fun findTranslocoDirectiveInAncestors(element: PsiElement): DirectiveContext {
+        var current: PsiElement? = element
+        var depth = 0
+        val maxDepth = 50 // Prevent infinite loops
+
+        while (current != null && depth < maxDepth) {
+            val text = current.text ?: ""
+
+            // Check if this element contains *transloco
+            if (text.contains("*transloco")) {
+                val directiveMatch = STRUCTURAL_DIRECTIVE_PATTERN.find(text)
+                if (directiveMatch != null) {
+                    val directiveContent = directiveMatch.groupValues[1]
+
+                    // Extract variable name (e.g., "let t" -> "t")
+                    val varMatch = LET_VAR_PATTERN.find(directiveContent)
+                    val variableName = varMatch?.groupValues?.get(1) ?: "t"
+
+                    // Extract scope (e.g., "read: 'admin'" -> "admin")
+                    val scopeMatch = READ_SCOPE_PATTERN.find(directiveContent)
+                    val scope = scopeMatch?.groupValues?.get(1)
+
+                    return DirectiveContext(variableName, scope, true)
+                }
+            }
+
+            current = current.parent
+            depth++
+        }
+
+        return DirectiveContext.NOT_FOUND
+    }
+
     override fun createCenterPanel(): JComponent {
         val mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
-        mainPanel.preferredSize = Dimension(JBUI.scale(600), JBUI.scale(450))
+        mainPanel.preferredSize = Dimension(JBUI.scale(650), JBUI.scale(520))
         mainPanel.border = JBUI.Borders.empty(8)
 
         // Header section
@@ -124,11 +214,12 @@ class TranslocoCreateTranslationDialog(
         val panel = JPanel(GridBagLayout())
         panel.border = JBUI.Borders.emptyBottom(12)
         val gbc = GridBagConstraints()
+        var row = 0
 
         // Row 1: Selected Text (readonly display)
         gbc.apply {
             gridx = 0
-            gridy = 0
+            gridy = row
             anchor = GridBagConstraints.WEST
             insets = JBUI.insets(0, 0, 8, 8)
         }
@@ -146,11 +237,12 @@ class TranslocoCreateTranslationDialog(
         selectedTextDisplay.isEditable = false
         selectedTextDisplay.background = JBColor(Color(245, 245, 245), Color(60, 63, 65))
         panel.add(selectedTextDisplay, gbc)
+        row++
 
         // Row 2: Translation Key input
         gbc.apply {
             gridx = 0
-            gridy = 1
+            gridy = row
             weightx = 0.0
             fill = GridBagConstraints.NONE
             insets = JBUI.insets(0, 0, 8, 8)
@@ -168,12 +260,104 @@ class TranslocoCreateTranslationDialog(
         keyTextField = JBTextField()
         keyTextField.toolTipText = "Enter the translation key (e.g., 'user.profile.title')"
         keyTextField.emptyText.text = "e.g., user.profile.title"
+        keyTextField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = updatePreview()
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = updatePreview()
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = updatePreview()
+        })
         panel.add(keyTextField, gbc)
+        row++
 
-        // Row 3: Location selector
+        // Row 3: Translation Method selector
         gbc.apply {
             gridx = 0
-            gridy = 2
+            gridy = row
+            weightx = 0.0
+            fill = GridBagConstraints.NONE
+            insets = JBUI.insets(0, 0, 8, 8)
+        }
+        val methodLabel = JBLabel("Method:")
+        methodLabel.font = methodLabel.font.deriveFont(Font.BOLD)
+        panel.add(methodLabel, gbc)
+
+        gbc.apply {
+            gridx = 1
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(0, 0, 8, 0)
+        }
+        val methodPanel = JPanel(BorderLayout(JBUI.scale(12), 0))
+
+        methodComboBox = JComboBox(TranslationMethod.values())
+        methodComboBox.renderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean
+            ): Component {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                if (value is TranslationMethod) {
+                    text = "${value.displayName} - ${value.description}"
+                }
+                return this
+            }
+        }
+
+        // Set default selection based on detected context or last used
+        val defaultMethod = if (detectedContext.found) {
+            TranslationMethod.DIRECTIVE
+        } else {
+            when (getLastUsedMethod()) {
+                "directive" -> TranslationMethod.DIRECTIVE
+                else -> TranslationMethod.PIPE
+            }
+        }
+        methodComboBox.selectedItem = defaultMethod
+
+        methodComboBox.addActionListener {
+            updateDirectiveInfo()
+            updatePreview()
+        }
+        methodPanel.add(methodComboBox, BorderLayout.WEST)
+
+        // Directive context info
+        directiveInfoLabel = JBLabel()
+        directiveInfoLabel.font = directiveInfoLabel.font.deriveFont(Font.ITALIC, directiveInfoLabel.font.size - 1f)
+        methodPanel.add(directiveInfoLabel, BorderLayout.CENTER)
+
+        panel.add(methodPanel, gbc)
+        row++
+
+        // Row 4: Preview
+        gbc.apply {
+            gridx = 0
+            gridy = row
+            weightx = 0.0
+            fill = GridBagConstraints.NONE
+            insets = JBUI.insets(0, 0, 8, 8)
+        }
+        val previewTitleLabel = JBLabel("Preview:")
+        previewTitleLabel.font = previewTitleLabel.font.deriveFont(Font.BOLD)
+        panel.add(previewTitleLabel, gbc)
+
+        gbc.apply {
+            gridx = 1
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(0, 0, 8, 0)
+        }
+        previewLabel = JBLabel()
+        previewLabel.font = Font(Font.MONOSPACED, Font.PLAIN, previewLabel.font.size)
+        previewLabel.foreground = JBColor(Color(0, 102, 153), Color(102, 178, 255))
+        panel.add(previewLabel, gbc)
+        row++
+
+        // Row 5: Location selector
+        gbc.apply {
+            gridx = 0
+            gridy = row
             weightx = 0.0
             fill = GridBagConstraints.NONE
             insets = JBUI.insets(0, 0, 0, 8)
@@ -200,7 +384,36 @@ class TranslocoCreateTranslationDialog(
 
         panel.add(locationPanel, gbc)
 
+        // Initialize UI state
+        updateDirectiveInfo()
+        updatePreview()
+
         return panel
+    }
+
+    private fun updateDirectiveInfo() {
+        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod ?: TranslationMethod.PIPE
+
+        if (selectedMethod == TranslationMethod.DIRECTIVE) {
+            if (detectedContext.found) {
+                val scopeInfo = if (detectedContext.scope != null) {
+                    " (scope: '${detectedContext.scope}')"
+                } else ""
+                directiveInfoLabel.text = "Using ${detectedContext.variableName}()$scopeInfo"
+                directiveInfoLabel.foreground = JBColor(Color(0, 128, 0), Color(100, 200, 100))
+            } else {
+                directiveInfoLabel.text = "No *transloco directive found in scope"
+                directiveInfoLabel.foreground = JBColor(Color(180, 100, 0), Color(255, 180, 100))
+            }
+        } else {
+            directiveInfoLabel.text = ""
+        }
+    }
+
+    private fun updatePreview() {
+        val key = keyTextField.text.trim().ifBlank { "your.key.here" }
+        val preview = generateTranslocoReplacement(key)
+        previewLabel.text = preview
     }
 
     private fun createContentPanel(): JComponent {
@@ -636,8 +849,8 @@ class TranslocoCreateTranslationDialog(
             return ValidationInfo("Please enter a translation key", keyTextField)
         }
 
-        // Validate key format (should be dot-separated alphanumeric)
-        if (!key.matches(Regex("""^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*)*$"""))) {
+        // Validate key format (should be dot-separated alphanumeric, allowing underscores)
+        if (!key.matches(Regex("""^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$"""))) {
             return ValidationInfo(
                 "Key must be dot-separated identifiers (e.g., 'user.profile.title')",
                 keyTextField
@@ -653,29 +866,54 @@ class TranslocoCreateTranslationDialog(
             return ValidationInfo("English translation cannot be empty", languageTextFields["en"])
         }
 
-        // Check if key already exists
+        // Check if key already exists (accounting for scope)
+        val keyToCheck = getEffectiveKeyForStorage(key)
         selectedLocation?.let { location ->
             val englishFile = location.files["en"]
             if (englishFile != null) {
                 val psiFile = PsiManager.getInstance(project).findFile(englishFile) as? JsonFile
-                if (psiFile != null && JsonKeyNavigator.keyExists(psiFile, key)) {
+                if (psiFile != null && JsonKeyNavigator.keyExists(psiFile, keyToCheck)) {
                     return ValidationInfo(
-                        "Key '$key' already exists in this location. Use Edit Translation instead.",
+                        "Key '$keyToCheck' already exists in this location. Use Edit Translation instead.",
                         keyTextField
                     )
                 }
             }
         }
 
+        // Warn if using directive without detected context
+        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod
+        if (selectedMethod == TranslationMethod.DIRECTIVE && !detectedContext.found) {
+            // Just a warning, don't block - user might add the directive manually
+        }
+
         return null
+    }
+
+    /**
+     * Get the key to use for storage in JSON, accounting for scope.
+     * If using directive with a scope, the key in JSON should NOT include the scope prefix.
+     */
+    private fun getEffectiveKeyForStorage(key: String): String {
+        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod
+        if (selectedMethod == TranslationMethod.DIRECTIVE && detectedContext.found && detectedContext.scope != null) {
+            // When using directive with scope, the key in JSON is just the key
+            // The scope prefix is handled by the directive
+            return key
+        }
+        return key
     }
 
     override fun doOKAction() {
         val key = keyTextField.text.trim()
         val location = selectedLocation ?: return
+        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod ?: TranslationMethod.PIPE
 
-        // Remember this location
+        // Remember preferences
         setLastUsedLocation(location.fullPath)
+        setLastUsedMethod(if (selectedMethod == TranslationMethod.DIRECTIVE) "directive" else "pipe")
+
+        val keyForStorage = getEffectiveKeyForStorage(key)
 
         WriteCommandAction.runWriteCommandAction(project, "Create Translation", null, {
             // 1. Create translations in all JSON files
@@ -684,16 +922,16 @@ class TranslocoCreateTranslationDialog(
                 if (value.isNotBlank()) {
                     val file = location.files[lang]
                     if (file != null) {
-                        createTranslation(file, key, value)
+                        createTranslation(file, keyForStorage, value)
                     }
                 }
             }
 
-            // 2. Replace selected text in template with transloco pipe
+            // 2. Replace selected text in template with transloco syntax
             replaceSelectedTextWithTransloco(key)
         })
 
-        LOG.debug("TRANSLOCO-CREATE: Created translation key '$key' and updated template")
+        LOG.debug("TRANSLOCO-CREATE: Created translation key '$keyForStorage' and updated template with method $selectedMethod")
         super.doOKAction()
     }
 
@@ -764,7 +1002,7 @@ class TranslocoCreateTranslationDialog(
         val document = editor.document
         val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document) ?: return
 
-        // Determine the replacement text based on context
+        // Determine the replacement text based on selected method
         val replacement = generateTranslocoReplacement(key)
 
         // Replace the selected text
@@ -773,11 +1011,19 @@ class TranslocoCreateTranslationDialog(
     }
 
     /**
-     * Generate the appropriate Transloco replacement text.
-     * Uses the pipe syntax by default: {{ 'key' | transloco }}
+     * Generate the appropriate Transloco replacement text based on selected method.
      */
     private fun generateTranslocoReplacement(key: String): String {
-        // Default to interpolation with pipe
-        return "{{ '$key' | transloco }}"
+        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod ?: TranslationMethod.PIPE
+
+        return when (selectedMethod) {
+            TranslationMethod.PIPE -> {
+                "{{ '$key' | transloco }}"
+            }
+            TranslationMethod.DIRECTIVE -> {
+                val varName = if (detectedContext.found) detectedContext.variableName else "t"
+                "{{ $varName('$key') }}"
+            }
+        }
     }
 }

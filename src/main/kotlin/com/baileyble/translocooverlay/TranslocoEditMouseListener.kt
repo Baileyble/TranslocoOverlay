@@ -9,7 +9,8 @@ import java.awt.event.MouseEvent
 
 /**
  * Mouse listener that handles Ctrl+Shift+Click:
- * - In HTML files: Opens the translation editor dialog
+ * - In HTML files with text selected: Opens the create translation dialog
+ * - In HTML files on transloco key: Opens the translation editor dialog
  * - In JSON translation files: Finds usages in templates
  */
 class TranslocoEditMouseListener : EditorMouseListener {
@@ -40,14 +41,37 @@ class TranslocoEditMouseListener : EditorMouseListener {
         val element = psiFile.findElementAt(offset) ?: return
 
         when {
-            // Handle HTML files - open translation editor
+            // Handle HTML files
             fileName.endsWith(".html") -> {
-                if (!TranslocoEditUtil.isOnTranslocoKey(element)) {
-                    return
+                // Check if there's a text selection
+                val selectionModel = editor.selectionModel
+                val selectedText = selectionModel.selectedText
+
+                if (!selectedText.isNullOrBlank()) {
+                    // Text is selected - open create translation dialog
+                    val selectionStart = selectionModel.selectionStart
+                    val selectionEnd = selectionModel.selectionEnd
+
+                    LOG.debug("TRANSLOCO-CREATE: Ctrl+Shift+Click with selected text: '$selectedText'")
+                    event.consume()
+
+                    val dialog = TranslocoCreateTranslationDialog(
+                        project = project,
+                        editor = editor,
+                        selectedText = selectedText,
+                        selectionStart = selectionStart,
+                        selectionEnd = selectionEnd
+                    )
+                    dialog.show()
+                } else {
+                    // No selection - check if on existing transloco key
+                    if (!TranslocoEditUtil.isOnTranslocoKey(element)) {
+                        return
+                    }
+                    LOG.debug("TRANSLOCO-EDIT: Ctrl+Shift+Click detected on transloco key in HTML")
+                    event.consume()
+                    TranslocoEditUtil.editTranslation(project, element)
                 }
-                LOG.debug("TRANSLOCO-EDIT: Ctrl+Shift+Click detected on transloco key in HTML")
-                event.consume()
-                TranslocoEditUtil.editTranslation(project, element)
             }
 
             // Handle JSON translation files - find usages in templates

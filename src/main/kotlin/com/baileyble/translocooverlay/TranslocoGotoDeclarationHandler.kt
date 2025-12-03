@@ -5,13 +5,31 @@ import com.baileyble.translocooverlay.util.TranslationFileFinder
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
 import com.intellij.json.psi.JsonFile
 import com.intellij.json.psi.JsonProperty
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.ui.ColoredListCellRenderer
+import com.intellij.ui.SimpleTextAttributes
+import javax.swing.JList
+
+/**
+ * Data class to hold information about a key usage location.
+ */
+data class KeyUsageInfo(
+    val element: PsiElement,
+    val fileName: String,
+    val lineNumber: Int,
+    val contextSnippet: String,
+    val virtualFile: VirtualFile?
+)
 
 /**
  * Handles Ctrl+Click navigation for Transloco translation keys.
@@ -394,6 +412,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
     /**
      * Find usages of the JSON key in HTML templates.
+     * Shows a custom popup with clear file context when multiple usages are found.
      */
     private fun findUsagesInTemplates(element: PsiElement): Array<PsiElement>? {
         val jsonProperty = getJsonProperty(element) ?: return null
@@ -409,7 +428,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
         LOG.warn("TRANSLOCO-USAGES: Looking for usages of key '$keyPath' (scope: $scopePrefix)")
 
-        val usages = mutableListOf<PsiElement>()
+        val usageInfos = mutableListOf<KeyUsageInfo>()
 
         // Build all possible key variations to search for
         val searchKeys = mutableSetOf<String>()
@@ -426,10 +445,9 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             val text = psiFile.text
 
             for (searchKey in searchKeys) {
-                // Check for the key in any string context
                 if (text.contains(searchKey)) {
-                    findKeyOccurrences(psiFile, searchKey).forEach { occurrence ->
-                        usages.add(occurrence)
+                    collectUsageInfos(psiFile, searchKey, htmlFile).forEach { info ->
+                        usageInfos.add(info)
                     }
                 }
             }
@@ -443,16 +461,119 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
             for (searchKey in searchKeys) {
                 if (text.contains(searchKey)) {
-                    findKeyOccurrences(psiFile, searchKey).forEach { occurrence ->
-                        usages.add(occurrence)
+                    collectUsageInfos(psiFile, searchKey, tsFile).forEach { info ->
+                        usageInfos.add(info)
                     }
                 }
             }
         }
 
-        LOG.warn("TRANSLOCO-USAGES: Found ${usages.size} usages for key '$keyPath'")
+        LOG.warn("TRANSLOCO-USAGES: Found ${usageInfos.size} usages for key '$keyPath'")
 
-        return if (usages.isNotEmpty()) usages.toTypedArray() else null
+        if (usageInfos.isEmpty()) return null
+
+        // If only one usage, navigate directly
+        if (usageInfos.size == 1) {
+            return arrayOf(usageInfos[0].element)
+        }
+
+        // Show custom popup with file context
+        showUsagesPopup(project, keyPath, usageInfos)
+
+        // Return null so IntelliJ doesn't show its default popup
+        return null
+    }
+
+    /**
+     * Show a custom popup with clear file context for choosing between usages.
+     */
+    private fun showUsagesPopup(project: com.intellij.openapi.project.Project, keyPath: String, usages: List<KeyUsageInfo>) {
+        ApplicationManager.getApplication().invokeLater {
+            val popup = JBPopupFactory.getInstance()
+                .createPopupChooserBuilder(usages)
+                .setTitle("Usages of '$keyPath'")
+                .setRenderer(object : ColoredListCellRenderer<KeyUsageInfo>() {
+                    override fun customizeCellRenderer(
+                        list: JList<out KeyUsageInfo>,
+                        value: KeyUsageInfo?,
+                        index: Int,
+                        selected: Boolean,
+                        hasFocus: Boolean
+                    ) {
+                        if (value == null) return
+
+                        // Show file name prominently
+                        append(value.fileName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+
+                        // Show line number
+                        append(":${value.lineNumber}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+
+                        // Show context snippet
+                        append("  ", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                        val snippet = value.contextSnippet.take(60)
+                        append(snippet, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                        if (value.contextSnippet.length > 60) {
+                            append("...", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                        }
+                    }
+                })
+                .setItemChosenCallback { selected ->
+                    // Navigate to the selected usage
+                    val virtualFile = selected.virtualFile ?: return@setItemChosenCallback
+                    val descriptor = OpenFileDescriptor(
+                        project,
+                        virtualFile,
+                        selected.element.textOffset
+                    )
+                    FileEditorManager.getInstance(project).openTextEditor(descriptor, true)
+                }
+                .setNamerForFiltering { it.fileName + " " + it.contextSnippet }
+                .createPopup()
+
+            popup.showInFocusCenter()
+        }
+    }
+
+    /**
+     * Collect usage info for occurrences of a key in a file.
+     */
+    private fun collectUsageInfos(psiFile: com.intellij.psi.PsiFile, key: String, virtualFile: VirtualFile): List<KeyUsageInfo> {
+        val infos = mutableListOf<KeyUsageInfo>()
+        val text = psiFile.text
+        val processedOffsets = mutableSetOf<Int>()
+
+        var index = 0
+        while (true) {
+            val foundIndex = text.indexOf(key, index)
+            if (foundIndex < 0) break
+
+            if (foundIndex !in processedOffsets) {
+                processedOffsets.add(foundIndex)
+
+                val element = psiFile.findElementAt(foundIndex)
+                if (element != null) {
+                    // Calculate line number (1-based)
+                    val lineNumber = text.substring(0, foundIndex).count { it == '\n' } + 1
+
+                    // Get context snippet (the line containing the key)
+                    val lineStart = text.lastIndexOf('\n', foundIndex).let { if (it < 0) 0 else it + 1 }
+                    val lineEnd = text.indexOf('\n', foundIndex).let { if (it < 0) text.length else it }
+                    val contextSnippet = text.substring(lineStart, lineEnd).trim()
+
+                    infos.add(KeyUsageInfo(
+                        element = element,
+                        fileName = virtualFile.name,
+                        lineNumber = lineNumber,
+                        contextSnippet = contextSnippet,
+                        virtualFile = virtualFile
+                    ))
+                }
+            }
+
+            index = foundIndex + 1
+        }
+
+        return infos
     }
 
     /**
@@ -477,53 +598,6 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         }
 
         return null
-    }
-
-    /**
-     * Find occurrences of a key in a PSI file.
-     * Returns parent elements with more context for better display in "Choose Declaration" popup.
-     */
-    private fun findKeyOccurrences(file: com.intellij.psi.PsiFile, key: String): List<PsiElement> {
-        val occurrences = mutableListOf<PsiElement>()
-        val text = file.text
-        val processedElements = mutableSetOf<PsiElement>()
-
-        // Find all occurrences of the key
-        var index = 0
-        while (true) {
-            val foundIndex = text.indexOf(key, index)
-            if (foundIndex < 0) break
-
-            // Find the PSI element at this offset
-            val element = file.findElementAt(foundIndex)
-            if (element != null) {
-                // Walk up to find a meaningful parent element for better context
-                // Look for string literal, attribute, or expression
-                var contextElement: PsiElement = element
-                var depth = 0
-                while (depth < 5) {
-                    val parent = contextElement.parent ?: break
-                    val parentText = parent.text
-
-                    // Stop at reasonable boundaries that show good context
-                    if (parentText.length > 200) break  // Don't go too high
-                    if (parentText.contains("\n") && parentText.split("\n").size > 3) break  // Max 3 lines
-
-                    contextElement = parent
-                    depth++
-                }
-
-                // Avoid duplicates (same parent element)
-                if (contextElement !in processedElements) {
-                    processedElements.add(contextElement)
-                    occurrences.add(contextElement)
-                }
-            }
-
-            index = foundIndex + 1
-        }
-
-        return occurrences
     }
 
     /**

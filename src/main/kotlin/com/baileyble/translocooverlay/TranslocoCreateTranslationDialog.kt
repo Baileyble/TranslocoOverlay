@@ -7,7 +7,9 @@ import com.intellij.json.psi.JsonElementGenerator
 import com.intellij.json.psi.JsonFile
 import com.intellij.json.psi.JsonObject
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
+import com.intellij.util.Alarm
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
@@ -29,7 +31,7 @@ import java.awt.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import java.net.URLEncoder
 import java.util.prefs.Preferences
 import javax.swing.*
@@ -179,6 +181,8 @@ class TranslocoCreateTranslationDialog(
 
     // Key validation feedback
     private lateinit var keyStatusLabel: JBLabel
+    private val validationAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, disposable)
+    private val validationDebounceMs = 300
 
     init {
         title = "Create Translation"
@@ -447,7 +451,7 @@ class TranslocoCreateTranslationDialog(
         val methodPanel = JPanel(BorderLayout(JBUI.scale(12), 0))
 
         if (!::methodComboBox.isInitialized) {
-            methodComboBox = JComboBox(TranslationMethod.values())
+            methodComboBox = JComboBox(TranslationMethod.entries.toTypedArray())
             methodComboBox.renderer = object : DefaultListCellRenderer() {
                 override fun getListCellRendererComponent(
                     list: JList<*>?,
@@ -602,7 +606,7 @@ class TranslocoCreateTranslationDialog(
         }
         val methodPanel = JPanel(BorderLayout(JBUI.scale(12), 0))
 
-        methodComboBox = JComboBox(TranslationMethod.values())
+        methodComboBox = JComboBox(TranslationMethod.entries.toTypedArray())
         methodComboBox.renderer = object : DefaultListCellRenderer() {
             override fun getListCellRendererComponent(
                 list: JList<*>?,
@@ -870,24 +874,30 @@ class TranslocoCreateTranslationDialog(
 
     /**
      * Check if the key already exists and update the status label.
+     * Uses debouncing to prevent excessive background checks while typing.
      */
     private fun validateKeyExists() {
+        // Cancel any pending validation
+        validationAlarm.cancelAllRequests()
+
         val key = keyTextField.text.trim()
 
         // Clear status if key is empty or invalid format
         if (key.isBlank() || !key.matches(Regex("""^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$"""))) {
             keyStatusLabel.text = " "
+            keyStatusLabel.icon = null
             return
         }
 
         val location = selectedLocation
         if (location == null) {
             keyStatusLabel.text = " "
+            keyStatusLabel.icon = null
             return
         }
 
-        // Check if key exists in background thread
-        ApplicationManager.getApplication().executeOnPooledThread {
+        // Debounce: wait before checking to avoid excessive validation while typing
+        validationAlarm.addRequest({
             val keyToCheck = getEffectiveKeyForStorage(key)
             val englishFile = location.files["en"]
 
@@ -900,17 +910,20 @@ class TranslocoCreateTranslationDialog(
                 false
             }
 
-            SwingUtilities.invokeLater {
-                if (exists) {
-                    keyStatusLabel.text = "Key '$keyToCheck' already exists - choose a different key or use Edit Translation"
-                    keyStatusLabel.foreground = JBColor(Color(180, 0, 0), Color(255, 100, 100))
-                    keyStatusLabel.icon = UIManager.getIcon("OptionPane.warningIcon")
-                } else {
-                    keyStatusLabel.text = " "
-                    keyStatusLabel.icon = null
+            // Update UI on EDT - check if key still matches to avoid stale updates
+            ApplicationManager.getApplication().invokeLater({
+                if (keyTextField.text.trim() == key) {  // Only update if key hasn't changed
+                    if (exists) {
+                        keyStatusLabel.text = "Key '$keyToCheck' already exists - choose a different key"
+                        keyStatusLabel.foreground = JBColor(Color(180, 0, 0), Color(255, 100, 100))
+                        keyStatusLabel.icon = UIManager.getIcon("OptionPane.warningIcon")
+                    } else {
+                        keyStatusLabel.text = " "
+                        keyStatusLabel.icon = null
+                    }
                 }
-            }
-        }
+            }, ModalityState.stateForComponent(keyTextField))
+        }, validationDebounceMs)
     }
 
     private fun createContentPanel(): JComponent {
@@ -1590,7 +1603,7 @@ class TranslocoCreateTranslationDialog(
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
                 val encodedText = URLEncoder.encode(text, "UTF-8")
-                val url = URL("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=$targetLang&dt=t&q=$encodedText")
+                val url = URI("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=$targetLang&dt=t&q=$encodedText").toURL()
 
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
@@ -1695,13 +1708,17 @@ class TranslocoCreateTranslationDialog(
             return ValidationInfo("Duplicate parameter names: ${duplicates.keys.joinToString()}")
         }
 
-        // Check if key already exists (accounting for scope)
+        // Check if key already exists (accounting for scope) - wrap PSI access in ReadAction
         val keyToCheck = getEffectiveKeyForStorage(key)
-        selectedLocation?.let { location ->
+        val location = selectedLocation
+        if (location != null) {
             val englishFile = location.files["en"]
             if (englishFile != null) {
-                val psiFile = PsiManager.getInstance(project).findFile(englishFile) as? JsonFile
-                if (psiFile != null && JsonKeyNavigator.keyExists(psiFile, keyToCheck)) {
+                val keyExists = ReadAction.compute<Boolean, Throwable> {
+                    val psiFile = PsiManager.getInstance(project).findFile(englishFile) as? JsonFile
+                    psiFile != null && JsonKeyNavigator.keyExists(psiFile, keyToCheck)
+                }
+                if (keyExists) {
                     return ValidationInfo(
                         "Key '$keyToCheck' already exists in this location. Use Edit Translation instead.",
                         keyTextField
@@ -1714,15 +1731,11 @@ class TranslocoCreateTranslationDialog(
     }
 
     /**
-     * Get the key to use for storage in JSON, accounting for scope.
+     * Get the key to use for storage in JSON.
+     * Note: For scoped translations, the key is stored without the scope prefix
+     * because the scope is handled by the translation file location itself.
      */
-    private fun getEffectiveKeyForStorage(key: String): String {
-        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod
-        if (selectedMethod == TranslationMethod.DIRECTIVE && detectedContext.found && detectedContext.scope != null) {
-            return key
-        }
-        return key
-    }
+    private fun getEffectiveKeyForStorage(key: String): String = key
 
     override fun doOKAction() {
         val key = keyTextField.text.trim()

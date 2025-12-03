@@ -502,11 +502,12 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
     private fun showNoUsagesMessage(project: com.intellij.openapi.project.Project, keyPath: String) {
         ApplicationManager.getApplication().invokeLater {
             val statusBar = com.intellij.openapi.wm.WindowManager.getInstance().getStatusBar(project)
+            val component = statusBar?.component ?: return@invokeLater
             JBPopupFactory.getInstance()
                 .createHtmlTextBalloonBuilder("No usages found for '$keyPath'", MessageType.INFO, null)
                 .setFadeoutTime(3000)
                 .createBalloon()
-                .show(com.intellij.ui.awt.RelativePoint.getCenterOf(statusBar.component), Balloon.Position.atRight)
+                .show(com.intellij.ui.awt.RelativePoint.getCenterOf(component), Balloon.Position.atRight)
         }
     }
 

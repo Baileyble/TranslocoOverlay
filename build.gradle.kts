@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.baileyble"
-version = "1.0-SNAPSHOT"
+version = "2.0.0"
 
 repositories {
     mavenCentral()
@@ -35,7 +35,18 @@ intellijPlatform {
         }
 
         changeNotes = """
-            Initial version
+            <h3>Version 2.0.0 - Create Translation from Selection</h3>
+            <ul>
+                <li><b>NEW: Create Translation Shortcut</b> - Select text in HTML, Ctrl+Shift+Click to create a new translation</li>
+                <li><b>NEW: Existing Translation Detection</b> - Automatically finds if selected text already exists as a translation</li>
+                <li><b>NEW: Method Selector</b> - Choose between Pipe syntax or Directive syntax for new translations</li>
+                <li><b>NEW: Parameter Support</b> - Detects Angular interpolations (e.g., {{user.name}}) and converts them to transloco params</li>
+                <li><b>NEW: TRANSLOCO_SCOPE Detection</b> - Automatically detects scoped translations from component providers</li>
+                <li><b>NEW: Real-time Key Validation</b> - Shows warning if translation key already exists while typing</li>
+                <li><b>NEW: Directive Context Detection</b> - Detects *transloco directive variable names and scopes</li>
+                <li><b>IMPROVED: Multi-language Translation Dialog</b> - Enhanced UI with live preview</li>
+                <li><b>IMPROVED: Google Translate Integration</b> - Translate individual languages or all at once</li>
+            </ul>
         """.trimIndent()
     }
 }

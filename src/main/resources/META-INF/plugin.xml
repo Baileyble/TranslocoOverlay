@@ -5,34 +5,49 @@
     <vendor url="https://github.com/Baileyble">Baileyble</vendor>
 
     <description><![CDATA[
-        <p>Provides hover-to-view and inline editing for Transloco translation keys in Angular templates.</p>
+        <p>A powerful translation management tool for <b>Transloco</b> in Angular projects. Create, edit, and navigate translations directly from your HTML templates.</p>
 
-        <h3>Features</h3>
+        <h3>✨ Key Features</h3>
         <ul>
-            <li><b>Hover</b> over translation keys to see their values across all languages</li>
-            <li><b>Ctrl+Click</b> on keys in HTML templates to navigate to JSON translation files</li>
-            <li><b>Ctrl+Shift+Click</b> on keys in HTML to open multi-language translation editor</li>
-            <li><b>Ctrl+Shift+Click</b> on keys in JSON files to find usages in templates</li>
-            <li>Edit all language translations in one convenient dialog</li>
-            <li>Google Translate integration for auto-translation</li>
-            <li>Create new translation keys that don't exist yet</li>
-            <li>Autocomplete for translation keys</li>
-            <li>Support for Nx monorepo scoped translations</li>
+            <li><b>Create Translations from Selection</b> - Select text in HTML, Ctrl+Shift+Click to instantly create a new translation key</li>
+            <li><b>Existing Translation Detection</b> - Automatically finds if your selected text already exists as a translation to avoid duplicates</li>
+            <li><b>Smart Parameter Detection</b> - Detects Angular interpolations like <code>{{user.name}}</code> and converts them to transloco params</li>
+            <li><b>TRANSLOCO_SCOPE Detection</b> - Auto-detects scoped translations from your component's providers</li>
+            <li><b>Real-time Key Validation</b> - Shows warnings if a translation key already exists while you type</li>
+            <li><b>Method Selector</b> - Choose between Pipe (<code>| transloco</code>) or Directive (<code>t('key')</code>) syntax</li>
+            <li><b>Directive Context Detection</b> - Automatically detects <code>*transloco</code> variable names and scopes</li>
         </ul>
 
-        <h3>Supported Patterns</h3>
+        <h3>🔧 Navigation & Editing</h3>
+        <ul>
+            <li><b>Hover</b> over translation keys to see values across all languages</li>
+            <li><b>Ctrl+Click</b> on keys in HTML to navigate to JSON translation files</li>
+            <li><b>Ctrl+Shift+Click</b> on existing keys to open multi-language editor</li>
+            <li><b>Ctrl+Shift+Click</b> on keys in JSON to find usages in templates</li>
+            <li><b>Autocomplete</b> for translation keys with preview</li>
+            <li><b>Google Translate</b> integration for auto-translation</li>
+        </ul>
+
+        <h3>📁 Supported Patterns</h3>
         <ul>
             <li><code>{{ 'key' | transloco }}</code> - Pipe syntax</li>
+            <li><code>{{ 'key' | transloco:{ param: value } }}</code> - Pipe with params</li>
             <li><code>[transloco]="'key'"</code> - Attribute binding</li>
             <li><code>transloco="key"</code> - Direct attribute</li>
             <li><code>t('key')</code> with <code>*transloco</code> directive - Structural directive</li>
         </ul>
 
+        <h3>🏢 Enterprise Ready</h3>
+        <ul>
+            <li>Support for <b>Nx monorepo</b> scoped translations</li>
+            <li>Works with multiple translation file locations</li>
+            <li>Remembers your last used location and method preferences</li>
+        </ul>
+
         <h3>Open Source & AI Transparency</h3>
-        <p>This plugin was entirely created using AI (Claude by Anthropic). If you are skeptical of AI-generated code quality,
-        the source code is fully open source and available on <a href="https://github.com/Baileyble/TranslocoOverlay">GitHub</a>
-        for your review before installation. You are encouraged to inspect the code, report issues, or create your own fork
-        to customize it for your internationalization needs.</p>
+        <p>This plugin was created using AI (Claude by Anthropic). The source code is fully open source on
+        <a href="https://github.com/Baileyble/TranslocoOverlay">GitHub</a> for review. You are encouraged to inspect the code,
+        report issues, or fork it for your internationalization needs.</p>
     ]]></description>
 
     <!-- Platform and plugin dependencies -->

@@ -16,7 +16,6 @@
             <li>Google Translate integration for auto-translation</li>
             <li>Create new translation keys that don't exist yet</li>
             <li>Autocomplete for translation keys</li>
-            <li>Toggle inline translation preview (Ctrl+Alt+T)</li>
         </ul>
 
         <h3>Supported Patterns</h3>
@@ -53,37 +52,5 @@
         <!-- Editor factory listener for Ctrl+Shift+Click editing -->
         <editorFactoryListener
                 implementation="com.baileyble.translocooverlay.TranslocoEditorFactoryListener"/>
-
-        <!-- Inlay hints provider for showing translations inline (declarative API) -->
-        <codeInsight.declarativeInlayProvider
-                language="HTML"
-                implementationClass="com.baileyble.translocooverlay.TranslocoInlayHintsProvider"
-                providerId="transloco.inlay.hints"
-                isEnabledByDefault="true"
-                group="VALUES"/>
-
-        <!-- Project service for toggle state -->
-        <projectService
-                serviceImplementation="com.baileyble.translocooverlay.TranslocoTranslationToggleService"/>
     </extensions>
-
-    <!-- Actions -->
-    <actions>
-        <!-- Toggle action in Tools menu -->
-        <action id="Transloco.ToggleTranslations"
-                class="com.baileyble.translocooverlay.TranslocoToggleTranslationsAction"
-                text="Show Transloco Translations"
-                description="Toggle inline display of translation values">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt T"/>
-        </action>
-
-        <!-- Also add to editor popup menu -->
-        <action id="Transloco.ToggleTranslationsPopup"
-                class="com.baileyble.translocooverlay.TranslocoToggleTranslationsAction"
-                text="Show Transloco Translations"
-                description="Toggle inline display of translation values">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-        </action>
-    </actions>
 </idea-plugin>

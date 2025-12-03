@@ -136,6 +136,16 @@ class TranslocoCreateTranslationDialog(
         DIRECTIVE("Directive", "{{ t('key') }} with *transloco")
     }
 
+    /**
+     * Represents an existing translation that matches the selected text.
+     */
+    data class ExistingTranslation(
+        val key: String,
+        val value: String,
+        val location: TranslationLocation,
+        val file: VirtualFile
+    )
+
     private lateinit var keyTextField: JBTextField
     private val languageTextFields = mutableMapOf<String, JBTextField>()
     private var selectedLocation: TranslationLocation? = null
@@ -159,6 +169,14 @@ class TranslocoCreateTranslationDialog(
     private var detectedComponentScope: TranslocoScopeDetector.ScopeDetectionResult =
         TranslocoScopeDetector.ScopeDetectionResult.NOT_FOUND
 
+    // Existing translation detection
+    private var existingTranslations: List<ExistingTranslation> = emptyList()
+    private var showingExistingPanel = false
+    private lateinit var mainContentPanel: JPanel
+    private lateinit var existingPanel: JPanel
+    private lateinit var createPanel: JPanel
+    private lateinit var cardLayout: CardLayout
+
     init {
         title = "Create Translation"
 
@@ -173,8 +191,8 @@ class TranslocoCreateTranslationDialog(
 
         init()
 
-        // Find available locations
-        findAvailableLocations()
+        // Find available locations and search for existing translations
+        findAvailableLocationsAndExisting()
     }
 
     /**
@@ -299,8 +317,182 @@ class TranslocoCreateTranslationDialog(
     }
 
     override fun createCenterPanel(): JComponent {
+        mainContentPanel = JPanel()
+        cardLayout = CardLayout()
+        mainContentPanel.layout = cardLayout
+
+        // Create the "existing translations found" panel
+        existingPanel = createExistingTranslationsPanel()
+        mainContentPanel.add(existingPanel, "existing")
+
+        // Create the normal "create new" panel
+        createPanel = createCreateNewPanel()
+        mainContentPanel.add(createPanel, "create")
+
+        // Start with create panel (will switch to existing if matches found)
+        cardLayout.show(mainContentPanel, "create")
+
+        return mainContentPanel
+    }
+
+    /**
+     * Create the panel shown when existing translations are found.
+     */
+    private fun createExistingTranslationsPanel(): JPanel {
+        val panel = JPanel(BorderLayout(0, JBUI.scale(12)))
+        panel.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(450))
+        panel.border = JBUI.Borders.empty(8)
+
+        // Header
+        val headerPanel = JPanel(GridBagLayout())
+        val gbc = GridBagConstraints()
+
+        gbc.apply {
+            gridx = 0
+            gridy = 0
+            gridwidth = 2
+            anchor = GridBagConstraints.WEST
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(0, 0, 12, 0)
+        }
+        val infoLabel = JBLabel("<html><b>Existing translation(s) found!</b><br>" +
+            "The selected text already exists in your translation files. " +
+            "You can use an existing key or create a new one.</html>")
+        infoLabel.foreground = JBColor(Color(0, 100, 0), Color(100, 200, 100))
+        headerPanel.add(infoLabel, gbc)
+
+        // Selected text display
+        gbc.apply {
+            gridy = 1
+            gridwidth = 1
+            weightx = 0.0
+            insets = JBUI.insets(8, 0, 8, 8)
+        }
+        val selectedLabel = JBLabel("Selected text:")
+        selectedLabel.font = selectedLabel.font.deriveFont(Font.BOLD)
+        headerPanel.add(selectedLabel, gbc)
+
+        gbc.apply {
+            gridx = 1
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(8, 0, 8, 0)
+        }
+        val selectedTextDisplay = JBTextField(selectedText)
+        selectedTextDisplay.isEditable = false
+        selectedTextDisplay.background = JBColor(Color(245, 245, 245), Color(60, 63, 65))
+        headerPanel.add(selectedTextDisplay, gbc)
+
+        // Method selector for existing
+        gbc.apply {
+            gridx = 0
+            gridy = 2
+            weightx = 0.0
+            fill = GridBagConstraints.NONE
+            insets = JBUI.insets(0, 0, 8, 8)
+        }
+        val methodLabel = JBLabel("Method:")
+        methodLabel.font = methodLabel.font.deriveFont(Font.BOLD)
+        headerPanel.add(methodLabel, gbc)
+
+        gbc.apply {
+            gridx = 1
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(0, 0, 8, 0)
+        }
+        // Reuse the method combo box (it's already initialized)
+        headerPanel.add(createMethodSelector(), gbc)
+
+        panel.add(headerPanel, BorderLayout.NORTH)
+
+        // List of existing translations (will be populated later)
+        val listPanel = JPanel(BorderLayout())
+        listPanel.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(JBColor.border()),
+                "Existing Translations"
+            ),
+            JBUI.Borders.empty(8)
+        )
+
+        val placeholder = JBLabel("Searching for existing translations...")
+        placeholder.horizontalAlignment = SwingConstants.CENTER
+        placeholder.name = "existingListPlaceholder"
+        listPanel.add(placeholder, BorderLayout.CENTER)
+
+        panel.add(listPanel, BorderLayout.CENTER)
+
+        // Buttons at bottom
+        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT))
+        val createNewButton = JButton("Create New Instead")
+        createNewButton.addActionListener {
+            showingExistingPanel = false
+            cardLayout.show(mainContentPanel, "create")
+            title = "Create Translation"
+        }
+        buttonPanel.add(createNewButton)
+        panel.add(buttonPanel, BorderLayout.SOUTH)
+
+        return panel
+    }
+
+    /**
+     * Create a method selector combo box (used in both panels).
+     */
+    private fun createMethodSelector(): JPanel {
+        val methodPanel = JPanel(BorderLayout(JBUI.scale(12), 0))
+
+        if (!::methodComboBox.isInitialized) {
+            methodComboBox = JComboBox(TranslationMethod.values())
+            methodComboBox.renderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(
+                    list: JList<*>?,
+                    value: Any?,
+                    index: Int,
+                    isSelected: Boolean,
+                    cellHasFocus: Boolean
+                ): Component {
+                    super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                    if (value is TranslationMethod) {
+                        text = "${value.displayName} - ${value.description}"
+                    }
+                    return this
+                }
+            }
+
+            val defaultMethod = if (detectedContext.found) {
+                TranslationMethod.DIRECTIVE
+            } else {
+                when (getLastUsedMethod()) {
+                    "directive" -> TranslationMethod.DIRECTIVE
+                    else -> TranslationMethod.PIPE
+                }
+            }
+            methodComboBox.selectedItem = defaultMethod
+
+            methodComboBox.addActionListener {
+                updateDirectiveInfo()
+                updatePreview()
+            }
+        }
+
+        methodPanel.add(methodComboBox, BorderLayout.WEST)
+
+        if (!::directiveInfoLabel.isInitialized) {
+            directiveInfoLabel = JBLabel()
+            directiveInfoLabel.font = directiveInfoLabel.font.deriveFont(Font.ITALIC, directiveInfoLabel.font.size - 1f)
+        }
+        methodPanel.add(directiveInfoLabel, BorderLayout.CENTER)
+
+        return methodPanel
+    }
+
+    /**
+     * Create the normal "create new translation" panel.
+     */
+    private fun createCreateNewPanel(): JPanel {
         val mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
-        // Increase height if we have parameters
         val height = if (detectedParams.isNotEmpty()) 620 else 520
         mainPanel.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(height))
         mainPanel.border = JBUI.Borders.empty(8)
@@ -773,10 +965,11 @@ class TranslocoCreateTranslationDialog(
         }
     }
 
-    private fun findAvailableLocations() {
+    private fun findAvailableLocationsAndExisting() {
         ApplicationManager.getApplication().executeOnPooledThread {
             val locations = mutableListOf<TranslationLocation>()
             val processedPaths = mutableSetOf<String>()
+            val foundExisting = mutableListOf<ExistingTranslation>()
 
             // Find all translation files and group by directory - must be in read action
             val allFiles = ReadAction.compute<List<VirtualFile>, Throwable> {
@@ -791,7 +984,19 @@ class TranslocoCreateTranslationDialog(
                 val filesMap = files.associateBy { it.nameWithoutExtension }
                 if (filesMap.isNotEmpty()) {
                     val displayPath = getDisplayPath(path)
-                    locations.add(TranslationLocation(displayPath, path, filesMap))
+                    val location = TranslationLocation(displayPath, path, filesMap)
+                    locations.add(location)
+
+                    // Search for existing translations in English files
+                    val englishFile = filesMap["en"]
+                    if (englishFile != null) {
+                        val matches = ReadAction.compute<List<Pair<String, String>>, Throwable> {
+                            searchForExistingTranslation(englishFile, selectedText)
+                        }
+                        for ((key, value) in matches) {
+                            foundExisting.add(ExistingTranslation(key, value, location, englishFile))
+                        }
+                    }
                 }
             }
 
@@ -828,10 +1033,259 @@ class TranslocoCreateTranslationDialog(
                 ))
             }
 
+            // Filter existing translations by scope if detected
+            existingTranslations = if (detectedScope != null) {
+                foundExisting.filter { existing ->
+                    TranslocoScopeDetector.locationMatchesScope(existing.location.fullPath, detectedScope)
+                }
+            } else {
+                foundExisting
+            }
+
+            LOG.debug("TRANSLOCO-CREATE: Found ${existingTranslations.size} existing translations matching '$selectedText'")
+
             // Update UI on EDT
             SwingUtilities.invokeLater {
                 updateLocationUI()
+                if (existingTranslations.isNotEmpty()) {
+                    showExistingTranslationsUI()
+                }
             }
+        }
+    }
+
+    /**
+     * Search a JSON file for translations matching the given text.
+     * Returns list of (key, value) pairs.
+     */
+    private fun searchForExistingTranslation(file: VirtualFile, searchText: String): List<Pair<String, String>> {
+        val results = mutableListOf<Pair<String, String>>()
+        val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: return results
+        val rootObject = psiFile.topLevelValue as? JsonObject ?: return results
+
+        // Normalize search text for comparison (trim whitespace)
+        val normalizedSearch = searchText.trim()
+
+        // Recursively search the JSON
+        searchJsonObject(rootObject, "", normalizedSearch, results)
+
+        return results
+    }
+
+    /**
+     * Recursively search a JSON object for matching string values.
+     */
+    private fun searchJsonObject(
+        jsonObject: JsonObject,
+        prefix: String,
+        searchText: String,
+        results: MutableList<Pair<String, String>>
+    ) {
+        for (property in jsonObject.propertyList) {
+            val key = if (prefix.isEmpty()) property.name else "$prefix.${property.name}"
+            val value = property.value
+
+            when (value) {
+                is JsonObject -> searchJsonObject(value, key, searchText, results)
+                is com.intellij.json.psi.JsonStringLiteral -> {
+                    val stringValue = value.value
+                    // Check for exact match (case-sensitive)
+                    if (stringValue == searchText) {
+                        results.add(key to stringValue)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Show the existing translations panel and populate it with found matches.
+     */
+    private fun showExistingTranslationsUI() {
+        showingExistingPanel = true
+        title = "Existing Translation Found"
+
+        // Find the list panel in existingPanel and update it
+        val listPanel = findComponentByBorder(existingPanel, "Existing Translations") as? JPanel
+        if (listPanel != null) {
+            listPanel.removeAll()
+
+            // Create list of existing translations
+            val listModel = DefaultListModel<ExistingTranslation>()
+            existingTranslations.forEach { listModel.addElement(it) }
+
+            val existingList = JBList(listModel)
+            existingList.cellRenderer = ExistingTranslationListCellRenderer()
+            existingList.selectionMode = ListSelectionModel.SINGLE_SELECTION
+
+            if (existingTranslations.isNotEmpty()) {
+                existingList.selectedIndex = 0
+            }
+
+            // Double-click to use
+            existingList.addMouseListener(object : java.awt.event.MouseAdapter() {
+                override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                    if (e.clickCount == 2) {
+                        val selected = existingList.selectedValue
+                        if (selected != null) {
+                            useExistingTranslation(selected)
+                        }
+                    }
+                }
+            })
+
+            val scrollPane = JBScrollPane(existingList)
+            listPanel.add(scrollPane, BorderLayout.CENTER)
+
+            // Add "Use Selected" button
+            val useButton = JButton("Use Selected Key")
+            useButton.addActionListener {
+                val selected = existingList.selectedValue
+                if (selected != null) {
+                    useExistingTranslation(selected)
+                }
+            }
+            val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT))
+            buttonPanel.add(useButton)
+            listPanel.add(buttonPanel, BorderLayout.SOUTH)
+
+            listPanel.revalidate()
+            listPanel.repaint()
+        }
+
+        cardLayout.show(mainContentPanel, "existing")
+    }
+
+    /**
+     * Find a component by its titled border text.
+     */
+    private fun findComponentByBorder(container: Container, title: String): Component? {
+        for (component in container.components) {
+            if (component is JPanel) {
+                val border = component.border
+                if (border is javax.swing.border.TitledBorder && border.title == title) {
+                    return component
+                }
+                if (border is javax.swing.border.CompoundBorder) {
+                    val outer = border.outsideBorder
+                    if (outer is javax.swing.border.TitledBorder && outer.title == title) {
+                        return component
+                    }
+                }
+                // Recurse into nested panels
+                val found = findComponentByBorder(component, title)
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
+    /**
+     * Use an existing translation - just replace the selected text with transloco syntax.
+     */
+    private fun useExistingTranslation(existing: ExistingTranslation) {
+        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod ?: TranslationMethod.PIPE
+        setLastUsedMethod(if (selectedMethod == TranslationMethod.DIRECTIVE) "directive" else "pipe")
+
+        WriteCommandAction.runWriteCommandAction(project, "Use Existing Translation", null, {
+            val replacement = generateTranslocoReplacementForKey(existing.key)
+            val document = editor.document
+            document.replaceString(selectionStart, selectionEnd, replacement)
+            PsiDocumentManager.getInstance(project).commitDocument(document)
+        })
+
+        LOG.debug("TRANSLOCO-CREATE: Used existing translation key '${existing.key}'")
+        close(OK_EXIT_CODE)
+    }
+
+    /**
+     * Generate transloco replacement for a given key (no params for existing).
+     */
+    private fun generateTranslocoReplacementForKey(key: String): String {
+        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod ?: TranslationMethod.PIPE
+
+        return when (selectedMethod) {
+            TranslationMethod.PIPE -> "{{ '$key' | transloco }}"
+            TranslationMethod.DIRECTIVE -> {
+                val varName = if (detectedContext.found) detectedContext.variableName else "t"
+                "{{ $varName('$key') }}"
+            }
+        }
+    }
+
+    /**
+     * Cell renderer for existing translation list.
+     */
+    private inner class ExistingTranslationListCellRenderer : ListCellRenderer<ExistingTranslation> {
+        override fun getListCellRendererComponent(
+            list: JList<out ExistingTranslation>?,
+            value: ExistingTranslation?,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean
+        ): Component {
+            val panel = JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(4)))
+            panel.border = JBUI.Borders.empty(8, 8)
+
+            if (isSelected) {
+                panel.background = UIManager.getColor("List.selectionBackground")
+            } else {
+                panel.background = if (index % 2 == 0) {
+                    UIManager.getColor("List.background")
+                } else {
+                    JBColor(Color(245, 245, 245), Color(50, 50, 50))
+                }
+            }
+
+            if (value != null) {
+                val topPanel = JPanel(BorderLayout())
+                topPanel.isOpaque = false
+
+                // Key name
+                val keyLabel = JBLabel(value.key)
+                keyLabel.font = Font(Font.MONOSPACED, Font.BOLD, keyLabel.font.size)
+                if (isSelected) {
+                    keyLabel.foreground = UIManager.getColor("List.selectionForeground")
+                } else {
+                    keyLabel.foreground = JBColor(Color(0, 102, 153), Color(102, 178, 255))
+                }
+                topPanel.add(keyLabel, BorderLayout.WEST)
+
+                // Location badge
+                val locationLabel = JBLabel(value.location.displayPath)
+                locationLabel.font = locationLabel.font.deriveFont(Font.ITALIC, locationLabel.font.size - 2f)
+                locationLabel.foreground = if (isSelected) {
+                    UIManager.getColor("List.selectionForeground")
+                } else {
+                    JBColor.GRAY
+                }
+                topPanel.add(locationLabel, BorderLayout.EAST)
+
+                panel.add(topPanel, BorderLayout.NORTH)
+
+                // Value preview
+                val valueLabel = JBLabel("\"${value.value}\"")
+                valueLabel.font = valueLabel.font.deriveFont(valueLabel.font.size - 1f)
+                valueLabel.foreground = if (isSelected) {
+                    UIManager.getColor("List.selectionForeground")
+                } else {
+                    JBColor.GRAY
+                }
+                panel.add(valueLabel, BorderLayout.CENTER)
+
+                // Preview of what will be inserted
+                val previewText = generateTranslocoReplacementForKey(value.key)
+                val previewLabel = JBLabel("→ $previewText")
+                previewLabel.font = Font(Font.MONOSPACED, Font.PLAIN, previewLabel.font.size - 1)
+                previewLabel.foreground = if (isSelected) {
+                    UIManager.getColor("List.selectionForeground")
+                } else {
+                    JBColor(Color(0, 128, 0), Color(100, 200, 100))
+                }
+                panel.add(previewLabel, BorderLayout.SOUTH)
+            }
+
+            return panel
         }
     }
 

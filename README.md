@@ -62,11 +62,13 @@ Contributions are welcome! Feel free to:
 - Submit pull requests
 - Fork the repository to customize for your needs
 
-## Disclaimer
+## AI Transparency
 
-This plugin was created with AI assistance (Claude by Anthropic). The source code is open source and available for review. You are encouraged to:
-- Review the code before installation
-- Report any issues or concerns
+This plugin was **entirely created using AI** (Claude by Anthropic). If you are skeptical of AI-generated code quality, the source code is fully open source and available for your review before installation.
+
+You are encouraged to:
+- **Inspect the code** before installing the plugin
+- Report any issues or concerns via GitHub Issues
 - Create your own fork to modify for your specific internationalization strategy
 
 ## License

@@ -28,10 +28,11 @@
             <li><code>t('key')</code> with <code>*transloco</code> directive - Structural directive</li>
         </ul>
 
-        <h3>Open Source</h3>
-        <p>This plugin was created with AI assistance (Claude). The source code is open source and available on
-        <a href="https://github.com/Baileyble/TranslocoOverlay">GitHub</a>. You are encouraged to review the code,
-        report issues, or create your own fork to customize it for your internationalization needs.</p>
+        <h3>Open Source & AI Transparency</h3>
+        <p>This plugin was entirely created using AI (Claude by Anthropic). If you are skeptical of AI-generated code quality,
+        the source code is fully open source and available on <a href="https://github.com/Baileyble/TranslocoOverlay">GitHub</a>
+        for your review before installation. You are encouraged to inspect the code, report issues, or create your own fork
+        to customize it for your internationalization needs.</p>
     ]]></description>
 
     <!-- Platform and plugin dependencies -->

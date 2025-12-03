@@ -225,7 +225,7 @@ class TranslocoEditDialog(
         return tabbedPane!!
     }
 
-    private fun showLocationSelector(relativeTo: Component?) {
+    private fun showLocationSelector(relativeTo: JComponent?) {
         if (availableLocations.isEmpty()) return
 
         // Sort with last used location first

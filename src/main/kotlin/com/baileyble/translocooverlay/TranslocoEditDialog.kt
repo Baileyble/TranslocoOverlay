@@ -13,11 +13,9 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiManager
 import com.intellij.ui.JBColor
-import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -107,10 +105,21 @@ class TranslocoEditDialog(
         title = if (existingLocations.isEmpty()) "Create Translation: $translationKey" else "Edit Translation: $translationKey"
         init()
 
-        // If no existing locations, prompt to select one
+        // If no existing locations, auto-select last used or prompt to select one
         if (existingLocations.isEmpty() && availableLocations.isNotEmpty()) {
-            SwingUtilities.invokeLater {
-                showLocationSelector(null)
+            val lastUsed = getLastUsedLocation()
+            val lastUsedLocation = availableLocations.find { it.fullPath == lastUsed }
+
+            if (lastUsedLocation != null) {
+                // Auto-select the last used location
+                SwingUtilities.invokeLater {
+                    addLocation(lastUsedLocation)
+                }
+            } else {
+                // Show selector
+                SwingUtilities.invokeLater {
+                    showLocationSelector(null)
+                }
             }
         }
     }
@@ -228,52 +237,140 @@ class TranslocoEditDialog(
     private fun showLocationSelector(relativeTo: JComponent?) {
         if (availableLocations.isEmpty()) return
 
-        // Sort with last used location first
         val lastUsed = getLastUsedLocation()
+
+        // Sort with last used location first
         val sortedLocations = availableLocations.sortedWith(compareBy(
             { it.fullPath != lastUsed },
             { it.displayPath }
         ))
 
-        val listModel = DefaultListModel<TranslationLocation>()
-        sortedLocations.forEach { listModel.addElement(it) }
+        // Create a proper selection dialog
+        val dialog = object : DialogWrapper(project, true) {
+            private var selectedLocation: TranslationLocation? = null
+            private lateinit var locationList: JBList<TranslationLocation>
 
-        val list = JBList(listModel)
-        list.cellRenderer = object : DefaultListCellRenderer() {
-            override fun getListCellRendererComponent(
-                list: JList<*>?,
-                value: Any?,
-                index: Int,
-                isSelected: Boolean,
-                cellHasFocus: Boolean
-            ): Component {
-                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
-                val location = value as? TranslationLocation
-                if (location != null) {
-                    text = location.displayPath
-                    toolTipText = location.fullPath
-                    if (location.fullPath == lastUsed) {
-                        text = "${location.displayPath} (last used)"
-                    }
-                }
-                return this
+            init {
+                title = "Select Translation Location"
+                init()
             }
+
+            override fun createCenterPanel(): JComponent {
+                val panel = JPanel(BorderLayout(0, JBUI.scale(8)))
+                panel.preferredSize = Dimension(JBUI.scale(500), JBUI.scale(300))
+                panel.border = JBUI.Borders.empty(8)
+
+                // Info label
+                val infoLabel = JBLabel("Select where to add this translation key:")
+                infoLabel.border = JBUI.Borders.emptyBottom(8)
+                panel.add(infoLabel, BorderLayout.NORTH)
+
+                // Location list with custom renderer
+                val listModel = DefaultListModel<TranslationLocation>()
+                sortedLocations.forEach { listModel.addElement(it) }
+
+                locationList = JBList(listModel)
+                locationList.cellRenderer = LocationListCellRenderer(lastUsed)
+                locationList.selectionMode = ListSelectionModel.SINGLE_SELECTION
+
+                // Pre-select last used or first item
+                val lastUsedIndex = sortedLocations.indexOfFirst { it.fullPath == lastUsed }
+                if (lastUsedIndex >= 0) {
+                    locationList.selectedIndex = lastUsedIndex
+                } else if (sortedLocations.isNotEmpty()) {
+                    locationList.selectedIndex = 0
+                }
+
+                // Double-click to select
+                locationList.addMouseListener(object : java.awt.event.MouseAdapter() {
+                    override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                        if (e.clickCount == 2) {
+                            doOKAction()
+                        }
+                    }
+                })
+
+                val scrollPane = JBScrollPane(locationList)
+                scrollPane.border = JBUI.Borders.customLine(JBColor.border(), 1)
+                panel.add(scrollPane, BorderLayout.CENTER)
+
+                return panel
+            }
+
+            override fun doOKAction() {
+                selectedLocation = locationList.selectedValue
+                super.doOKAction()
+            }
+
+            fun getSelected(): TranslationLocation? = selectedLocation
         }
 
-        val popup = JBPopupFactory.getInstance()
-            .createListPopupBuilder(list)
-            .setTitle("Select Location")
-            .setItemChosenCallback { selected ->
-                if (selected is TranslationLocation) {
-                    addLocation(selected)
+        if (dialog.showAndGet()) {
+            dialog.getSelected()?.let { addLocation(it) }
+        }
+    }
+
+    /**
+     * Custom cell renderer for the location list with better formatting.
+     */
+    private class LocationListCellRenderer(private val lastUsed: String?) : ListCellRenderer<TranslationLocation> {
+        override fun getListCellRendererComponent(
+            list: JList<out TranslationLocation>?,
+            value: TranslationLocation?,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean
+        ): Component {
+            val panel = JPanel(BorderLayout(JBUI.scale(8), 0))
+            panel.border = JBUI.Borders.empty(6, 8)
+
+            if (isSelected) {
+                panel.background = UIManager.getColor("List.selectionBackground")
+            } else {
+                panel.background = if (index % 2 == 0) {
+                    UIManager.getColor("List.background")
+                } else {
+                    JBColor(Color(245, 245, 245), Color(50, 50, 50))
                 }
             }
-            .createPopup()
 
-        if (relativeTo != null) {
-            popup.show(RelativePoint.getCenterOf(relativeTo))
-        } else {
-            popup.showCenteredInCurrentWindow(project)
+            if (value != null) {
+                val leftPanel = JPanel(BorderLayout())
+                leftPanel.isOpaque = false
+
+                // Display name (bold if last used)
+                val nameLabel = JBLabel(value.displayPath)
+                if (value.fullPath == lastUsed) {
+                    nameLabel.font = nameLabel.font.deriveFont(Font.BOLD)
+                }
+                if (isSelected) {
+                    nameLabel.foreground = UIManager.getColor("List.selectionForeground")
+                }
+                leftPanel.add(nameLabel, BorderLayout.NORTH)
+
+                // Full path (smaller, gray)
+                val pathLabel = JBLabel(value.fullPath)
+                pathLabel.font = pathLabel.font.deriveFont(pathLabel.font.size - 2f)
+                pathLabel.foreground = if (isSelected) {
+                    UIManager.getColor("List.selectionForeground")
+                } else {
+                    JBColor.GRAY
+                }
+                leftPanel.add(pathLabel, BorderLayout.SOUTH)
+
+                panel.add(leftPanel, BorderLayout.CENTER)
+
+                // "Last used" badge
+                if (value.fullPath == lastUsed) {
+                    val badge = JBLabel("last used")
+                    badge.font = badge.font.deriveFont(Font.ITALIC, badge.font.size - 2f)
+                    badge.foreground = JBColor(Color(70, 130, 180), Color(100, 160, 210))
+                    badge.border = JBUI.Borders.empty(0, 8)
+                    panel.add(badge, BorderLayout.EAST)
+                }
+            }
+
+            return panel
         }
     }
 

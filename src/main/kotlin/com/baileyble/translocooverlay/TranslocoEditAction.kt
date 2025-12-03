@@ -27,6 +27,31 @@ object TranslocoEditUtil {
     private val STRUCTURAL_DIRECTIVE_PATTERN = Regex("""\*transloco\s*=\s*["']([^"']+)["']""")
     private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
 
+    // Patterns to EXCLUDE (form controls, reactive forms, etc.)
+    private val EXCLUDE_PATTERNS = listOf(
+        Regex("""\.get\s*\(\s*['"]"""),              // .get('something')
+        Regex("""\.controls\s*\[\s*['"]"""),         // .controls['something']
+        Regex("""\.value\s*\.\s*"""),                // .value.something
+        Regex("""formControlName\s*=\s*['"]"""),     // formControlName="something"
+        Regex("""formGroupName\s*=\s*['"]"""),       // formGroupName="something"
+        Regex("""formArrayName\s*=\s*['"]"""),       // formArrayName="something"
+        Regex("""\[formControl]\s*="""),             // [formControl]="something"
+        Regex("""\[formControlName]\s*="""),         // [formControlName]="something"
+        Regex("""\[formGroup]\s*="""),               // [formGroup]="something"
+        Regex("""\.patchValue\s*\("""),              // .patchValue(
+        Regex("""\.setValue\s*\("""),                // .setValue(
+        Regex("""\.getRawValue\s*\("""),             // .getRawValue()
+        Regex("""\.hasError\s*\(\s*['"]"""),         // .hasError('something')
+        Regex("""\.getError\s*\(\s*['"]"""),         // .getError('something')
+        Regex("""routerLink\s*=\s*['"]"""),          // routerLink="something"
+        Regex("""\[routerLink]\s*="""),              // [routerLink]="something"
+        Regex("""querySelector\s*\(\s*['"]"""),      // querySelector('something')
+        Regex("""getElementById\s*\(\s*['"]"""),     // getElementById('something')
+        Regex("""\.navigate\s*\(\s*\["""),           // .navigate([
+        Regex("""localStorage\.(get|set)Item\s*\(\s*['"]"""), // localStorage operations
+        Regex("""sessionStorage\.(get|set)Item\s*\(\s*['"]"""), // sessionStorage operations
+    )
+
     /**
      * Edit a translation key. Shows the full dialog with all languages.
      */
@@ -253,9 +278,37 @@ object TranslocoEditUtil {
     }
 
     /**
+     * Get immediate context around the element (for exclusion checks).
+     */
+    private fun getImmediateContext(element: PsiElement): String {
+        val sb = StringBuilder()
+        var current: PsiElement? = element
+
+        repeat(5) {
+            current?.text?.let { sb.append(it).append(" ") }
+            current = current?.parent
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * Check if this context should be excluded (form controls, etc.).
+     */
+    private fun shouldExclude(context: String): Boolean {
+        return EXCLUDE_PATTERNS.any { it.containsMatchIn(context) }
+    }
+
+    /**
      * Extract the translation key from the element context.
      */
     fun extractTranslocoKey(element: PsiElement): String? {
+        // Check for exclusions first
+        val immediateContext = getImmediateContext(element)
+        if (shouldExclude(immediateContext)) {
+            return null
+        }
+
         // First try t() function pattern
         val tFunctionKey = extractTFunctionKey(element)
         if (tFunctionKey != null) {

@@ -2,6 +2,7 @@ package com.baileyble.translocooverlay
 
 import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
+import com.intellij.codeInsight.documentation.DocumentationManagerProtocol
 import com.intellij.json.psi.JsonFile
 import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.openapi.diagnostic.Logger
@@ -17,7 +18,7 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
     companion object {
         private val LOG = Logger.getInstance(TranslocoDocumentationProvider::class.java)
 
-        // Patterns for extracting transloco keys (same as GotoDeclarationHandler)
+        // Patterns for extracting transloco keys
         // Matches: 'key' | transloco or 'key' | transloco:params or 'key' | transloco:{ obj }
         private val PIPE_PATTERN = Regex("""['"]([^'"]+)['"]\s*\|\s*transloco(?:\s*:\s*(?:\{[^}]*\}|[^}|\s]+))?""")
         private val DIRECT_ATTR_PATTERN = Regex("""(?<!\[)transloco\s*=\s*["']([^"']+)["']""")
@@ -26,6 +27,31 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
         private val T_FUNCTION_PATTERN = Regex("""t\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*(?:\{[^}]*\}|[^)]+))?\s*\)""")
         private val STRUCTURAL_DIRECTIVE_PATTERN = Regex("""\*transloco\s*=\s*["']([^"']+)["']""")
         private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
+
+        // Patterns to EXCLUDE (form controls, reactive forms, etc.)
+        private val EXCLUDE_PATTERNS = listOf(
+            Regex("""\.get\s*\(\s*['"]"""),              // .get('something')
+            Regex("""\.controls\s*\[\s*['"]"""),         // .controls['something']
+            Regex("""\.value\s*\.\s*"""),                // .value.something
+            Regex("""formControlName\s*=\s*['"]"""),     // formControlName="something"
+            Regex("""formGroupName\s*=\s*['"]"""),       // formGroupName="something"
+            Regex("""formArrayName\s*=\s*['"]"""),       // formArrayName="something"
+            Regex("""\[formControl]\s*="""),             // [formControl]="something"
+            Regex("""\[formControlName]\s*="""),         // [formControlName]="something"
+            Regex("""\[formGroup]\s*="""),               // [formGroup]="something"
+            Regex("""\.patchValue\s*\("""),              // .patchValue(
+            Regex("""\.setValue\s*\("""),                // .setValue(
+            Regex("""\.getRawValue\s*\("""),             // .getRawValue()
+            Regex("""\.hasError\s*\(\s*['"]"""),         // .hasError('something')
+            Regex("""\.getError\s*\(\s*['"]"""),         // .getError('something')
+            Regex("""routerLink\s*=\s*['"]"""),          // routerLink="something"
+            Regex("""\[routerLink]\s*="""),              // [routerLink]="something"
+            Regex("""querySelector\s*\(\s*['"]"""),      // querySelector('something')
+            Regex("""getElementById\s*\(\s*['"]"""),     // getElementById('something')
+            Regex("""\.navigate\s*\(\s*\["""),           // .navigate([
+            Regex("""localStorage\.(get|set)Item\s*\(\s*['"]"""), // localStorage operations
+            Regex("""sessionStorage\.(get|set)Item\s*\(\s*['"]"""), // sessionStorage operations
+        )
     }
 
     override fun generateDoc(element: PsiElement?, originalElement: PsiElement?): String? {
@@ -36,6 +62,12 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
 
         // Only handle HTML files
         if (!fileName.endsWith(".html")) {
+            return null
+        }
+
+        // Check for exclusions first
+        val immediateContext = getImmediateContext(targetElement)
+        if (shouldExclude(immediateContext)) {
             return null
         }
 
@@ -63,6 +95,12 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
             return null
         }
 
+        // Check for exclusions
+        val immediateContext = getImmediateContext(targetElement)
+        if (shouldExclude(immediateContext)) {
+            return null
+        }
+
         val key = extractTranslocoKey(targetElement) ?: return null
         val translations = findTranslations(targetElement, key)
 
@@ -75,6 +113,28 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
         return if (firstTranslation != null) {
             "${firstTranslation.key}: \"${firstTranslation.value}\""
         } else null
+    }
+
+    /**
+     * Get immediate context around the element (for exclusion checks).
+     */
+    private fun getImmediateContext(element: PsiElement): String {
+        val sb = StringBuilder()
+        var current: PsiElement? = element
+
+        repeat(5) {
+            current?.text?.let { sb.append(it).append(" ") }
+            current = current?.parent
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * Check if this context should be excluded (form controls, etc.).
+     */
+    private fun shouldExclude(context: String): Boolean {
+        return EXCLUDE_PATTERNS.any { it.containsMatchIn(context) }
     }
 
     /**
@@ -236,32 +296,64 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
     private fun buildDocumentation(key: String, translations: Map<String, String>): String {
         val sb = StringBuilder()
 
-        sb.append("<html><body>")
-        sb.append("<div style='padding: 4px;'>")
+        sb.append("""
+            <html>
+            <head>
+                <style>
+                    body { font-family: sans-serif; margin: 0; padding: 8px; }
+                    .key-section { margin-bottom: 12px; }
+                    .key-label { color: #808080; font-size: 11px; margin-bottom: 2px; }
+                    .key-value { font-family: monospace; color: #6897BB; font-size: 12px; word-break: break-all; }
+                    .translations { margin-top: 8px; }
+                    .translation-row { display: flex; margin: 4px 0; align-items: baseline; }
+                    .lang-code { font-weight: bold; min-width: 30px; color: #808080; }
+                    .translation-value { color: #6A8759; margin-left: 8px; }
+                    .actions { margin-top: 12px; padding-top: 8px; border-top: 1px solid #404040; }
+                    .action-link { color: #589DF6; text-decoration: none; font-size: 11px; }
+                </style>
+            </head>
+            <body>
+        """.trimIndent())
 
-        // Key header
-        sb.append("<b>Translation Key:</b> <code>$key</code>")
-        sb.append("<hr/>")
+        // Key section
+        sb.append("""
+            <div class="key-section">
+                <div class="key-label">Translation Key:</div>
+                <div class="key-value">${escapeHtml(key)}</div>
+            </div>
+        """.trimIndent())
 
-        // Translations table
-        sb.append("<table>")
+        // Translations
+        sb.append("<div class='translations'>")
         for ((lang, value) in translations.entries.sortedBy { it.key }) {
-            val escapedValue = value
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-
-            sb.append("<tr>")
-            sb.append("<td><b>${lang.uppercase()}</b></td>")
-            sb.append("<td style='padding-left: 8px;'>\"$escapedValue\"</td>")
-            sb.append("</tr>")
+            sb.append("""
+                <div class="translation-row">
+                    <span class="lang-code">${lang.uppercase()}</span>
+                    <span class="translation-value">"${escapeHtml(value)}"</span>
+                </div>
+            """.trimIndent())
         }
-        sb.append("</table>")
-
         sb.append("</div>")
+
+        // Actions section with link - using PSI_ELEMENT protocol for navigation
+        sb.append("""
+            <div class="actions">
+                <a href="${DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL}edit" class="action-link">✏️ Edit</a>
+                &nbsp;&nbsp;
+                <span style="color: #808080; font-size: 10px;">Jump to Source: F4</span>
+            </div>
+        """.trimIndent())
+
         sb.append("</body></html>")
 
         return sb.toString()
+    }
+
+    private fun escapeHtml(text: String): String {
+        return text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
     }
 }

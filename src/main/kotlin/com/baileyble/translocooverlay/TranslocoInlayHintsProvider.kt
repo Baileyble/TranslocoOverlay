@@ -28,6 +28,38 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
         private val T_FUNCTION_PATTERN = Regex("""t\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*(?:\{[^}]*\}|[^)]+))?\s*\)""")
         private val STRUCTURAL_DIRECTIVE_PATTERN = Regex("""\*transloco\s*=\s*["']([^"']+)["']""")
         private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
+
+        // Patterns to EXCLUDE (form controls, reactive forms, etc.)
+        private val EXCLUDE_PATTERNS = listOf(
+            Regex("""\.get\s*\(\s*['"]"""),              // .get('something')
+            Regex("""\.controls\s*\[\s*['"]"""),         // .controls['something']
+            Regex("""\.value\s*\.\s*"""),                // .value.something
+            Regex("""formControlName\s*=\s*['"]"""),     // formControlName="something"
+            Regex("""formGroupName\s*=\s*['"]"""),       // formGroupName="something"
+            Regex("""formArrayName\s*=\s*['"]"""),       // formArrayName="something"
+            Regex("""\[formControl]\s*="""),             // [formControl]="something"
+            Regex("""\[formControlName]\s*="""),         // [formControlName]="something"
+            Regex("""\[formGroup]\s*="""),               // [formGroup]="something"
+            Regex("""\.patchValue\s*\("""),              // .patchValue(
+            Regex("""\.setValue\s*\("""),                // .setValue(
+            Regex("""\.getRawValue\s*\("""),             // .getRawValue()
+            Regex("""\.hasError\s*\(\s*['"]"""),         // .hasError('something')
+            Regex("""\.getError\s*\(\s*['"]"""),         // .getError('something')
+            Regex("""routerLink\s*=\s*['"]"""),          // routerLink="something"
+            Regex("""\[routerLink]\s*="""),              // [routerLink]="something"
+            Regex("""querySelector\s*\(\s*['"]"""),      // querySelector('something')
+            Regex("""getElementById\s*\(\s*['"]"""),     // getElementById('something')
+            Regex("""\.navigate\s*\(\s*\["""),           // .navigate([
+            Regex("""localStorage\.(get|set)Item\s*\(\s*['"]"""), // localStorage operations
+            Regex("""sessionStorage\.(get|set)Item\s*\(\s*['"]"""), // sessionStorage operations
+        )
+
+        /**
+         * Check if this context should be excluded (form controls, etc.).
+         */
+        fun shouldExclude(context: String): Boolean {
+            return EXCLUDE_PATTERNS.any { it.containsMatchIn(context) }
+        }
     }
 
     data class Settings(var enabled: Boolean = false)
@@ -76,6 +108,10 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
 
             val project = element.project
             val text = element.text ?: return true
+
+            // Check for exclusions - get wider context from parent elements
+            val immediateContext = getImmediateContext(element)
+            if (shouldExclude(immediateContext)) return true
 
             // Find all transloco patterns in this element
             findTranslocoKeys(text, element).forEach { (key, offset, scope) ->
@@ -214,6 +250,21 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
             }
 
             return null
+        }
+
+        /**
+         * Get immediate context around the element (for exclusion checks).
+         */
+        private fun getImmediateContext(element: PsiElement): String {
+            val sb = StringBuilder()
+            var current: PsiElement? = element
+
+            repeat(5) {
+                current?.text?.let { sb.append(it).append(" ") }
+                current = current?.parent
+            }
+
+            return sb.toString()
         }
     }
 }

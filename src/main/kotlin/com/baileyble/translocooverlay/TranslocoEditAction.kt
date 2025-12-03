@@ -58,11 +58,11 @@ object TranslocoEditUtil {
     fun editTranslation(project: Project, element: PsiElement) {
         val key = extractTranslocoKey(element)
         if (key == null) {
-            LOG.warn("TRANSLOCO-EDIT: No key found at element")
+            LOG.debug("TRANSLOCO-EDIT: No key found at element")
             return
         }
 
-        LOG.warn("TRANSLOCO-EDIT: Opening editor for key '$key'")
+        LOG.debug("TRANSLOCO-EDIT: Opening editor for key '$key'")
 
         // Find all translation locations for this key
         val (existingLocations, availableLocations) = findAllTranslationLocations(project, key)
@@ -92,7 +92,7 @@ object TranslocoEditUtil {
         val availableLocations = mutableListOf<TranslocoEditDialog.TranslationLocation>()
         val processedPaths = mutableSetOf<String>()
 
-        LOG.warn("TRANSLOCO-EDIT: Finding all locations for key '$key'")
+        LOG.debug("TRANSLOCO-EDIT: Finding all locations for key '$key'")
 
         // Strategy 1: Try scoped resolution (for Nx monorepo patterns)
         val keyParts = key.split(".")
@@ -100,7 +100,7 @@ object TranslocoEditUtil {
             val potentialScope = keyParts[0]
             val keyWithoutScope = keyParts.drop(1).joinToString(".")
 
-            LOG.warn("TRANSLOCO-EDIT: Trying scoped resolution: scope='$potentialScope', key='$keyWithoutScope'")
+            LOG.debug("TRANSLOCO-EDIT: Trying scoped resolution: scope='$potentialScope', key='$keyWithoutScope'")
 
             val scopedFiles = TranslationFileFinder.findScopedTranslationFiles(project, potentialScope)
             val scopedByPath = scopedFiles.groupBy { it.parent?.path ?: "" }
@@ -236,7 +236,7 @@ object TranslocoEditUtil {
             { it.displayPath }
         ))
 
-        LOG.warn("TRANSLOCO-EDIT: Found ${sortedExisting.size} existing, ${sortedAvailable.size} available locations for key '$key'")
+        LOG.debug("TRANSLOCO-EDIT: Found ${sortedExisting.size} existing, ${sortedAvailable.size} available locations for key '$key'")
         return Pair(sortedExisting, sortedAvailable)
     }
 

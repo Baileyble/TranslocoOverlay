@@ -109,20 +109,20 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         // First, try to detect t() function call pattern
         val tFunctionKey = extractTFunctionKey(sourceElement)
         if (tFunctionKey != null) {
-            LOG.warn("TRANSLOCO-GOTO: Detected t() function call")
-            LOG.warn("TRANSLOCO-GOTO: Key from t(): '$tFunctionKey'")
+            LOG.debug("TRANSLOCO-GOTO: Detected t() function call")
+            LOG.debug("TRANSLOCO-GOTO: Key from t(): '$tFunctionKey'")
 
             // Look for scope from *transloco directive
             val scope = findTranslocoScope(sourceElement)
             val fullKey = if (scope != null) "$scope.$tFunctionKey" else tFunctionKey
 
-            LOG.warn("TRANSLOCO-GOTO: Scope: $scope, Full key: '$fullKey'")
+            LOG.debug("TRANSLOCO-GOTO: Scope: $scope, Full key: '$fullKey'")
 
             val targets = findTranslationTargets(sourceElement, fullKey)
 
             // If no results with scope, try without scope
             if (targets.isEmpty() && scope != null) {
-                LOG.warn("TRANSLOCO-GOTO: No results with scope, trying without")
+                LOG.debug("TRANSLOCO-GOTO: No results with scope, trying without")
                 val targetsNoScope = findTranslationTargets(sourceElement, tFunctionKey)
                 if (targetsNoScope.isNotEmpty()) {
                     return targetsNoScope.toTypedArray()
@@ -141,12 +141,12 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             return null
         }
 
-        LOG.warn("TRANSLOCO-GOTO: Ctrl+Click in ${file.name}")
-        LOG.warn("TRANSLOCO-GOTO: Context: '${context.take(150)}'")
+        LOG.debug("TRANSLOCO-GOTO: Ctrl+Click in ${file.name}")
+        LOG.debug("TRANSLOCO-GOTO: Context: '${context.take(150)}'")
 
         // Extract the key from the context
         val key = extractKeyFromContext(context, sourceElement)
-        LOG.warn("TRANSLOCO-GOTO: Extracted key: $key")
+        LOG.debug("TRANSLOCO-GOTO: Extracted key: $key")
 
         if (key == null) {
             return null
@@ -154,13 +154,13 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
         // Check if the clicked position is on the key
         if (!isClickedOnKey(sourceElement, key)) {
-            LOG.warn("TRANSLOCO-GOTO: Click not on key, ignoring")
+            LOG.debug("TRANSLOCO-GOTO: Click not on key, ignoring")
             return null
         }
 
         // Find the translation in JSON files
         val targets = findTranslationTargets(sourceElement, key)
-        LOG.warn("TRANSLOCO-GOTO: Found ${targets.size} targets")
+        LOG.debug("TRANSLOCO-GOTO: Found ${targets.size} targets")
 
         return if (targets.isNotEmpty()) targets.toTypedArray() else null
     }
@@ -329,7 +329,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
         // Strategy 1: Try full key in main translation files
         val mainTranslationFiles = TranslationFileFinder.findTranslationFiles(project)
-        LOG.warn("TRANSLOCO-GOTO: Searching for '$key' in ${mainTranslationFiles.size} main files")
+        LOG.debug("TRANSLOCO-GOTO: Searching for '$key' in ${mainTranslationFiles.size} main files")
 
         for (file in mainTranslationFiles) {
             val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
@@ -338,7 +338,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             val navResult = JsonKeyNavigator.navigateToKey(psiFile, key)
 
             if (navResult.found && navResult.property != null) {
-                LOG.warn("TRANSLOCO-GOTO: Found '$key' in ${file.name}")
+                LOG.debug("TRANSLOCO-GOTO: Found '$key' in ${file.name}")
                 targets.add(navResult.property)
             }
         }
@@ -356,22 +356,22 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             val potentialScope = keyParts[0]
             val keyWithoutScope = keyParts.drop(1).joinToString(".")
 
-            LOG.warn("TRANSLOCO-GOTO: Trying scoped resolution: scope='$potentialScope', key='$keyWithoutScope'")
+            LOG.debug("TRANSLOCO-GOTO: Trying scoped resolution: scope='$potentialScope', key='$keyWithoutScope'")
 
             // Find scoped translation files (files in directories matching the scope)
             val scopedFiles = TranslationFileFinder.findScopedTranslationFiles(project, potentialScope)
-            LOG.warn("TRANSLOCO-GOTO: Found ${scopedFiles.size} scoped files for '$potentialScope'")
+            LOG.debug("TRANSLOCO-GOTO: Found ${scopedFiles.size} scoped files for '$potentialScope'")
 
             for (file in scopedFiles) {
                 val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
                     ?: continue
 
-                LOG.warn("TRANSLOCO-GOTO: Checking scoped file: ${file.path}")
+                LOG.debug("TRANSLOCO-GOTO: Checking scoped file: ${file.path}")
 
                 val navResult = JsonKeyNavigator.navigateToKey(psiFile, keyWithoutScope)
 
                 if (navResult.found && navResult.property != null) {
-                    LOG.warn("TRANSLOCO-GOTO: Found '$keyWithoutScope' in scoped file ${file.name}")
+                    LOG.debug("TRANSLOCO-GOTO: Found '$keyWithoutScope' in scoped file ${file.name}")
                     targets.add(navResult.property)
                 }
             }
@@ -379,7 +379,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
         // Strategy 3: Try all translation files with the full key (broader search)
         if (targets.isEmpty()) {
-            LOG.warn("TRANSLOCO-GOTO: Trying broader search in all translation files")
+            LOG.debug("TRANSLOCO-GOTO: Trying broader search in all translation files")
             val allFiles = TranslationFileFinder.findAllTranslationFiles(project)
 
             for (file in allFiles) {
@@ -392,7 +392,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
                 val navResult = JsonKeyNavigator.navigateToKey(psiFile, key)
 
                 if (navResult.found && navResult.property != null) {
-                    LOG.warn("TRANSLOCO-GOTO: Found '$key' in ${file.path}")
+                    LOG.debug("TRANSLOCO-GOTO: Found '$key' in ${file.path}")
                     targets.add(navResult.property)
                 }
             }
@@ -426,7 +426,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         val file = element.containingFile?.virtualFile ?: return null
         val scopePrefix = getScopeFromFilePath(file.path)
 
-        LOG.warn("TRANSLOCO-USAGES: Looking for usages of key '$keyPath' (scope: $scopePrefix)")
+        LOG.debug("TRANSLOCO-USAGES: Looking for usages of key '$keyPath' (scope: $scopePrefix)")
 
         val usageInfos = mutableListOf<KeyUsageInfo>()
 
@@ -468,7 +468,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             }
         }
 
-        LOG.warn("TRANSLOCO-USAGES: Found ${usageInfos.size} usages for key '$keyPath'")
+        LOG.debug("TRANSLOCO-USAGES: Found ${usageInfos.size} usages for key '$keyPath'")
 
         if (usageInfos.isEmpty()) return null
 

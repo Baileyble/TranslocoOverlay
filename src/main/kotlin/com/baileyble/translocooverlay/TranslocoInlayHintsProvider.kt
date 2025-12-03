@@ -2,24 +2,24 @@ package com.baileyble.translocooverlay
 
 import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
-import com.intellij.codeInsight.hints.*
-import com.intellij.codeInsight.hints.presentation.PresentationFactory
+import com.intellij.codeInsight.hints.declarative.*
 import com.intellij.json.psi.JsonFile
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
-import javax.swing.JComponent
-import javax.swing.JPanel
 
 /**
  * Provides inlay hints showing translation values inline in Angular templates.
+ * Uses the declarative API which is more stable in IntelliJ 2023+.
  */
 @Suppress("UnstableApiUsage")
-class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvider.Settings> {
+class TranslocoInlayHintsProvider : InlayHintsProvider {
 
     companion object {
+        const val PROVIDER_ID = "transloco.inlay.hints"
+
         // Matches: 'key' | transloco or 'key' | transloco:params or 'key' | transloco:{ obj }
         private val PIPE_PATTERN = Regex("""['"]([^'"]+)['"]\s*\|\s*transloco(?:\s*:\s*(?:\{[^}]*\}|[^}|\s]+))?""")
         private val DIRECT_ATTR_PATTERN = Regex("""(?<!\[)transloco\s*=\s*["']([^"']+)["']""")
@@ -31,93 +31,64 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
 
         // Patterns to EXCLUDE (form controls, reactive forms, etc.)
         private val EXCLUDE_PATTERNS = listOf(
-            Regex("""\.get\s*\(\s*['"]"""),              // .get('something')
-            Regex("""\.controls\s*\[\s*['"]"""),         // .controls['something']
-            Regex("""\.value\s*\.\s*"""),                // .value.something
-            Regex("""formControlName\s*=\s*['"]"""),     // formControlName="something"
-            Regex("""formGroupName\s*=\s*['"]"""),       // formGroupName="something"
-            Regex("""formArrayName\s*=\s*['"]"""),       // formArrayName="something"
-            Regex("""\[formControl]\s*="""),             // [formControl]="something"
-            Regex("""\[formControlName]\s*="""),         // [formControlName]="something"
-            Regex("""\[formGroup]\s*="""),               // [formGroup]="something"
-            Regex("""\.patchValue\s*\("""),              // .patchValue(
-            Regex("""\.setValue\s*\("""),                // .setValue(
-            Regex("""\.getRawValue\s*\("""),             // .getRawValue()
-            Regex("""\.hasError\s*\(\s*['"]"""),         // .hasError('something')
-            Regex("""\.getError\s*\(\s*['"]"""),         // .getError('something')
-            Regex("""routerLink\s*=\s*['"]"""),          // routerLink="something"
-            Regex("""\[routerLink]\s*="""),              // [routerLink]="something"
-            Regex("""querySelector\s*\(\s*['"]"""),      // querySelector('something')
-            Regex("""getElementById\s*\(\s*['"]"""),     // getElementById('something')
-            Regex("""\.navigate\s*\(\s*\["""),           // .navigate([
-            Regex("""localStorage\.(get|set)Item\s*\(\s*['"]"""), // localStorage operations
-            Regex("""sessionStorage\.(get|set)Item\s*\(\s*['"]"""), // sessionStorage operations
+            Regex("""\.get\s*\(\s*['"]"""),
+            Regex("""\.controls\s*\[\s*['"]"""),
+            Regex("""\.value\s*\.\s*"""),
+            Regex("""formControlName\s*=\s*['"]"""),
+            Regex("""formGroupName\s*=\s*['"]"""),
+            Regex("""formArrayName\s*=\s*['"]"""),
+            Regex("""\[formControl]\s*="""),
+            Regex("""\[formControlName]\s*="""),
+            Regex("""\[formGroup]\s*="""),
+            Regex("""\.patchValue\s*\("""),
+            Regex("""\.setValue\s*\("""),
+            Regex("""\.getRawValue\s*\("""),
+            Regex("""\.hasError\s*\(\s*['"]"""),
+            Regex("""\.getError\s*\(\s*['"]"""),
+            Regex("""routerLink\s*=\s*['"]"""),
+            Regex("""\[routerLink]\s*="""),
+            Regex("""querySelector\s*\(\s*['"]"""),
+            Regex("""getElementById\s*\(\s*['"]"""),
+            Regex("""\.navigate\s*\(\s*\["""),
+            Regex("""localStorage\.(get|set)Item\s*\(\s*['"]"""),
+            Regex("""sessionStorage\.(get|set)Item\s*\(\s*['"]"""),
         )
 
-        /**
-         * Check if this context should be excluded (form controls, etc.).
-         */
         fun shouldExclude(context: String): Boolean {
             return EXCLUDE_PATTERNS.any { it.containsMatchIn(context) }
         }
     }
 
-    data class Settings(var enabled: Boolean = false)
-
-    override val key: SettingsKey<Settings> = SettingsKey("transloco.inlay.hints")
-    override val name: String = "Transloco Translations"
-    override val previewText: String = """{{ 'common.hello' | transloco }}"""
-
-    override fun createSettings(): Settings = Settings()
-
-    override fun createConfigurable(settings: Settings): ImmediateConfigurable {
-        return object : ImmediateConfigurable {
-            override fun createComponent(listener: ChangeListener): JComponent = JPanel()
-        }
-    }
-
-    override fun getCollectorFor(
-        file: PsiFile,
-        editor: Editor,
-        settings: Settings,
-        sink: InlayHintsSink
-    ): InlayHintsCollector? {
+    override fun createCollector(file: PsiFile, editor: Editor): InlayHintsCollector? {
         if (!file.name.lowercase().endsWith(".html")) return null
 
         // Only show hints when toggle is ON (controlled by Ctrl+Alt+T)
         val toggleService = TranslocoTranslationToggleService.getInstance(file.project)
         if (!toggleService.showTranslations) return null
 
-        return TranslocoInlayHintsCollector(editor, file)
+        return TranslocoInlayCollector()
     }
 
-    private class TranslocoInlayHintsCollector(
-        private val editor: Editor,
-        private val file: PsiFile
-    ) : InlayHintsCollector {
-
-        // Track processed offsets to avoid duplicates
+    private class TranslocoInlayCollector : SharedBypassCollector {
         private val processedOffsets = mutableSetOf<Int>()
-
-        // Cache translations for performance
         private val translationCache = mutableMapOf<String, String?>()
 
-        override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
-            // Only process leaf elements (elements with no children) to avoid duplicates
-            if (element.firstChild != null) return true
+        override fun collectFromElement(element: PsiElement, sink: InlayTreeSink) {
+            // Only process leaf elements to avoid duplicates
+            if (element.firstChild != null) return
 
             val project = element.project
-            val text = element.text ?: return true
+            val text = element.text ?: return
 
-            // Check for exclusions - get wider context from parent elements
+            // Check for exclusions
             val immediateContext = getImmediateContext(element)
-            if (shouldExclude(immediateContext)) return true
+            if (shouldExclude(immediateContext)) return
 
             // Find all transloco patterns in this element
-            findTranslocoKeys(text, element).forEach { (key, offset, scope) ->
-                val absoluteOffset = element.textRange.startOffset + offset
+            findTranslocoKeys(text, element).forEach { (key, endOffset, scope) ->
+                val absoluteOffset = element.textRange.startOffset + endOffset
 
-                // Skip if we've already processed this offset
+                // Skip if already processed
                 if (processedOffsets.contains(absoluteOffset)) return@forEach
                 processedOffsets.add(absoluteOffset)
 
@@ -125,20 +96,20 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
                 val translation = getCachedTranslation(project, fullKey)
 
                 if (translation != null) {
-                    val factory = PresentationFactory(editor)
                     val truncated = if (translation.length > 40) {
                         translation.take(37) + "..."
                     } else translation
 
-                    val presentation = factory.roundWithBackground(
-                        factory.smallText(" = \"$truncated\"")
-                    )
-
-                    sink.addInlineElement(absoluteOffset, false, presentation, false)
+                    sink.addPresentation(
+                        position = InlineInlayPosition(absoluteOffset, false),
+                        payloads = null,
+                        tooltip = "Translation: $translation",
+                        hasBackground = true
+                    ) {
+                        text(" = \"$truncated\"")
+                    }
                 }
             }
-
-            return true
         }
 
         private fun getCachedTranslation(project: Project, key: String): String? {
@@ -152,14 +123,12 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
         private fun findTranslocoKeys(text: String, element: PsiElement): List<KeyMatch> {
             val results = mutableListOf<KeyMatch>()
 
-            // Find pipe syntax: 'key' | transloco
             PIPE_PATTERN.findAll(text).forEach { match ->
                 val key = match.groupValues[1]
                 val endOffset = match.range.last + 1
                 results.add(KeyMatch(key, endOffset, null))
             }
 
-            // Find t() function: t('key')
             T_FUNCTION_PATTERN.findAll(text).forEach { match ->
                 val key = match.groupValues[1]
                 val endOffset = match.range.last + 1
@@ -167,14 +136,12 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
                 results.add(KeyMatch(key, endOffset, scope))
             }
 
-            // Find direct attribute: transloco="key"
             DIRECT_ATTR_PATTERN.findAll(text).forEach { match ->
                 val key = match.groupValues[1]
                 val endOffset = match.range.last + 1
                 results.add(KeyMatch(key, endOffset, null))
             }
 
-            // Find binding: [transloco]="'key'"
             BINDING_ATTR_PATTERN.findAll(text).forEach { match ->
                 val key = match.groupValues[1].trim('\'', '"')
                 val endOffset = match.range.last + 1
@@ -214,13 +181,12 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
             // Try main files first
             val mainFiles = TranslationFileFinder.findTranslationFiles(project)
             for (file in mainFiles) {
-                if (file.nameWithoutExtension != "en") continue // Prefer English
+                if (file.nameWithoutExtension != "en") continue
                 val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
                 val value = JsonKeyNavigator.getStringValue(psiFile, key)
                 if (value != null) return value
             }
 
-            // Try any main file
             for (file in mainFiles) {
                 val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
                 val value = JsonKeyNavigator.getStringValue(psiFile, key)
@@ -241,7 +207,6 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
                     if (value != null) return value
                 }
 
-                // Try any scoped file
                 for (file in scopedFiles) {
                     val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
                     val value = JsonKeyNavigator.getStringValue(psiFile, keyWithoutScope)
@@ -252,9 +217,6 @@ class TranslocoInlayHintsProvider : InlayHintsProvider<TranslocoInlayHintsProvid
             return null
         }
 
-        /**
-         * Get immediate context around the element (for exclusion checks).
-         */
         private fun getImmediateContext(element: PsiElement): String {
             val sb = StringBuilder()
             var current: PsiElement? = element

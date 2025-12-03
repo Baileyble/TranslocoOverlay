@@ -54,10 +54,13 @@
         <editorFactoryListener
                 implementation="com.baileyble.translocooverlay.TranslocoEditorFactoryListener"/>
 
-        <!-- Inlay hints provider for showing translations inline -->
-        <codeInsight.inlayProvider
+        <!-- Inlay hints provider for showing translations inline (declarative API) -->
+        <codeInsight.declarativeInlayProvider
                 language="HTML"
-                implementationClass="com.baileyble.translocooverlay.TranslocoInlayHintsProvider"/>
+                implementationClass="com.baileyble.translocooverlay.TranslocoInlayHintsProvider"
+                providerId="transloco.inlay.hints"
+                isEnabledByDefault="true"
+                group="VALUES"/>
 
         <!-- Project service for toggle state -->
         <projectService

@@ -73,7 +73,7 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
         // Try to extract the translation key
         val key = extractTranslocoKey(targetElement) ?: return null
 
-        LOG.warn("TRANSLOCO-DOC: Generating doc for key '$key'")
+        LOG.debug("TRANSLOCO-DOC: Generating doc for key '$key'")
 
         // Find translations for this key
         val translations = findTranslations(targetElement, key)

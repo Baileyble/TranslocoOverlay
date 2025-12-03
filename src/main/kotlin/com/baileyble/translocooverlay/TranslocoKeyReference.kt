@@ -21,22 +21,22 @@ class TranslocoKeyReference(
     }
 
     init {
-        LOG.warn("TRANSLOCO-REF: Created reference for key '$key'")
+        LOG.debug("TRANSLOCO-REF: Created reference for key '$key'")
     }
 
     override fun multiResolve(incompleteCode: Boolean): Array<ResolveResult> {
-        LOG.warn("TRANSLOCO-REF: multiResolve() called for key '$key'")
+        LOG.debug("TRANSLOCO-REF: multiResolve() called for key '$key'")
 
         val project = element.project
         val translationFiles = TranslationFileFinder.findTranslationFiles(project)
 
-        LOG.warn("TRANSLOCO-REF: Found ${translationFiles.size} translation files")
+        LOG.debug("TRANSLOCO-REF: Found ${translationFiles.size} translation files")
         translationFiles.forEach { file ->
-            LOG.warn("TRANSLOCO-REF: Translation file: ${file.path}")
+            LOG.debug("TRANSLOCO-REF: Translation file: ${file.path}")
         }
 
         if (translationFiles.isEmpty()) {
-            LOG.warn("TRANSLOCO-REF: NO TRANSLATION FILES FOUND! Check your i18n directory structure.")
+            LOG.debug("TRANSLOCO-REF: NO TRANSLATION FILES FOUND! Check your i18n directory structure.")
             return ResolveResult.EMPTY_ARRAY
         }
 
@@ -45,38 +45,38 @@ class TranslocoKeyReference(
         for (file in translationFiles) {
             val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile
             if (psiFile == null) {
-                LOG.warn("TRANSLOCO-REF: Could not open ${file.path} as JsonFile")
+                LOG.debug("TRANSLOCO-REF: Could not open ${file.path} as JsonFile")
                 continue
             }
 
             val navResult = JsonKeyNavigator.navigateToKey(psiFile, key)
-            LOG.warn("TRANSLOCO-REF: Key '$key' in ${file.name}: found=${navResult.found}, value=${navResult.stringValue}")
+            LOG.debug("TRANSLOCO-REF: Key '$key' in ${file.name}: found=${navResult.found}, value=${navResult.stringValue}")
 
             if (navResult.found && navResult.property != null) {
                 results.add(PsiElementResolveResult(navResult.property))
-                LOG.warn("TRANSLOCO-REF: Added resolve result for ${file.name}")
+                LOG.debug("TRANSLOCO-REF: Added resolve result for ${file.name}")
             }
         }
 
-        LOG.warn("TRANSLOCO-REF: Resolved to ${results.size} targets")
+        LOG.debug("TRANSLOCO-REF: Resolved to ${results.size} targets")
         return results.toTypedArray()
     }
 
     override fun resolve(): PsiElement? {
-        LOG.warn("TRANSLOCO-REF: resolve() called for key '$key'")
+        LOG.debug("TRANSLOCO-REF: resolve() called for key '$key'")
         val results = multiResolve(false)
         val result = results.firstOrNull()?.element
-        LOG.warn("TRANSLOCO-REF: resolve() returning: ${result?.javaClass?.simpleName ?: "null"}")
+        LOG.debug("TRANSLOCO-REF: resolve() returning: ${result?.javaClass?.simpleName ?: "null"}")
         return result
     }
 
     override fun getVariants(): Array<Any> {
-        LOG.warn("TRANSLOCO-REF: getVariants() called for completion")
+        LOG.debug("TRANSLOCO-REF: getVariants() called for completion")
 
         val project = element.project
         val primaryFile = TranslationFileFinder.findPrimaryTranslationFile(project)
         if (primaryFile == null) {
-            LOG.warn("TRANSLOCO-REF: No primary translation file found for completion")
+            LOG.debug("TRANSLOCO-REF: No primary translation file found for completion")
             return emptyArray()
         }
 
@@ -84,7 +84,7 @@ class TranslocoKeyReference(
             ?: return emptyArray()
 
         val allKeys = JsonKeyNavigator.getAllKeys(psiFile)
-        LOG.warn("TRANSLOCO-REF: Found ${allKeys.size} keys for completion")
+        LOG.debug("TRANSLOCO-REF: Found ${allKeys.size} keys for completion")
 
         return allKeys.map { keyPath ->
             val value = JsonKeyNavigator.getStringValue(psiFile, keyPath)

@@ -349,7 +349,7 @@ class TranslocoEditDialog(
         if (navResult.found && navResult.property != null) {
             // Delete the property
             navResult.property.delete()
-            LOG.warn("TRANSLOCO-EDIT: Deleted '$keyPath' from ${file.name}")
+            LOG.debug("TRANSLOCO-EDIT: Deleted '$keyPath' from ${file.name}")
 
             // Clean up empty parent objects
             cleanupEmptyParents(psiFile, keyPath)
@@ -373,7 +373,7 @@ class TranslocoEditDialog(
                 // If the object is empty (only has braces), delete it
                 if (parentObj.propertyList.isEmpty() && parentResult.property != null) {
                     parentResult.property.delete()
-                    LOG.warn("TRANSLOCO-EDIT: Cleaned up empty parent '$parentPath' from ${psiFile.name}")
+                    LOG.debug("TRANSLOCO-EDIT: Cleaned up empty parent '$parentPath' from ${psiFile.name}")
                 } else {
                     // Parent is not empty, stop cleaning
                     break
@@ -784,7 +784,7 @@ class TranslocoEditDialog(
                 callback(translated ?: text)
 
             } catch (e: Exception) {
-                LOG.warn("TRANSLOCO-TRANSLATE: Failed to translate to $targetLang: ${e.message}")
+                LOG.debug("TRANSLOCO-TRANSLATE: Failed to translate to $targetLang: ${e.message}")
                 callback(text) // Return original text on failure
             }
         }
@@ -830,7 +830,7 @@ class TranslocoEditDialog(
 
             return if (result.isNotEmpty()) result.toString() else null
         } catch (e: Exception) {
-            LOG.warn("TRANSLOCO-TRANSLATE: Failed to parse response: ${e.message}")
+            LOG.debug("TRANSLOCO-TRANSLATE: Failed to parse response: ${e.message}")
             return null
         }
     }
@@ -874,7 +874,7 @@ class TranslocoEditDialog(
             val generator = JsonElementGenerator(project)
             val newLiteral = generator.createStringLiteral(newValue)
             navResult.value.replace(newLiteral)
-            LOG.warn("TRANSLOCO-EDIT: Updated '$keyPath' in ${file.name}")
+            LOG.debug("TRANSLOCO-EDIT: Updated '$keyPath' in ${file.name}")
         }
     }
 
@@ -898,7 +898,7 @@ class TranslocoEditDialog(
                 val added = currentObject.findProperty(part)
                 currentObject = added?.value as? JsonObject ?: return
             } else {
-                LOG.warn("TRANSLOCO-EDIT: Cannot create nested key, path blocked at '$part'")
+                LOG.debug("TRANSLOCO-EDIT: Cannot create nested key, path blocked at '$part'")
                 return
             }
         }
@@ -907,7 +907,7 @@ class TranslocoEditDialog(
         val finalKey = keyParts.last()
         val escapedValue = newValue.replace("\\", "\\\\").replace("\"", "\\\"")
         addPropertyToObject(currentObject, finalKey, "\"$escapedValue\"")
-        LOG.warn("TRANSLOCO-EDIT: Created '$keyPath' in ${file.name}")
+        LOG.debug("TRANSLOCO-EDIT: Created '$keyPath' in ${file.name}")
     }
 
     /**

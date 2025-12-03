@@ -1,6 +1,7 @@
 package com.baileyble.translocooverlay
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.codeInsight.hints.declarative.DeclarativeInlayHintsPassFactory
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -10,9 +11,7 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.EditorFactory
-import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 
 /**
@@ -62,40 +61,30 @@ class TranslocoToggleTranslationsAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val psiFile = e.getData(CommonDataKeys.PSI_FILE) ?: return
-        val editor = e.getData(CommonDataKeys.EDITOR)
 
         val service = TranslocoTranslationToggleService.getInstance(project)
         service.showTranslations = !service.showTranslations
 
-        LOG.warn("TRANSLOCO-TOGGLE: Translations display set to ${service.showTranslations}")
+        LOG.debug("TRANSLOCO-TOGGLE: Translations display set to ${service.showTranslations}")
 
         // Refresh the editor to update inlay hints
         ApplicationManager.getApplication().invokeLater({
-            // Restart daemon analyzer
+            // Restart daemon analyzer to trigger re-collection of hints
             DaemonCodeAnalyzer.getInstance(project).restart(psiFile)
 
-            // Also trigger inlay hints refresh by clearing and repainting
-            if (editor != null) {
-                // Clear existing inlay hints and trigger refresh
-                editor.inlayModel.getInlineElementsInRange(0, editor.document.textLength)
-                    .filter { it.renderer.toString().contains("=") }
-                    .forEach { it.dispose() }
-
-                // Force editor repaint
-                editor.component.repaint()
+            // Also try to restart declarative inlay hints specifically
+            try {
+                @Suppress("UnstableApiUsage")
+                DeclarativeInlayHintsPassFactory.Companion.resetModificationStamp()
+            } catch (ex: Exception) {
+                LOG.debug("Could not reset declarative hints: ${ex.message}")
             }
 
-            // If editor wasn't available, try to find it from the file
+            // Force repaint of all editors showing this file
             val virtualFile = psiFile.virtualFile
-            if (virtualFile != null && editor == null) {
-                val document = FileDocumentManager.getInstance().getDocument(virtualFile)
-                if (document != null) {
-                    EditorFactory.getInstance().getEditors(document, project).forEach { ed ->
-                        ed.inlayModel.getInlineElementsInRange(0, ed.document.textLength)
-                            .filter { it.renderer.toString().contains("=") }
-                            .forEach { it.dispose() }
-                        ed.component.repaint()
-                    }
+            if (virtualFile != null) {
+                FileEditorManager.getInstance(project).getAllEditors(virtualFile).forEach { editor ->
+                    (editor as? com.intellij.openapi.fileEditor.TextEditor)?.editor?.component?.repaint()
                 }
             }
         }, ModalityState.defaultModalityState())

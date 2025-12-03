@@ -76,18 +76,18 @@ class TranslocoCompletionProvider : CompletionProvider<CompletionParameters>() {
             return
         }
 
-        LOG.warn("TRANSLOCO-COMPLETE: Providing completions in ${file.name}")
+        LOG.debug("TRANSLOCO-COMPLETE: Providing completions in ${file.name}")
 
         val project = parameters.editor.project ?: return
 
         // Get the current prefix being typed
         val prefix = getCurrentPrefix(position, parameters.offset)
-        LOG.warn("TRANSLOCO-COMPLETE: Current prefix: '$prefix'")
+        LOG.debug("TRANSLOCO-COMPLETE: Current prefix: '$prefix'")
 
         // Find the primary translation file
         val primaryFile = TranslationFileFinder.findPrimaryTranslationFile(project)
         if (primaryFile == null) {
-            LOG.warn("TRANSLOCO-COMPLETE: No primary translation file found")
+            LOG.debug("TRANSLOCO-COMPLETE: No primary translation file found")
             // Try all translation files
             val allFiles = TranslationFileFinder.findAllTranslationFiles(project)
             if (allFiles.isEmpty()) {
@@ -120,7 +120,7 @@ class TranslocoCompletionProvider : CompletionProvider<CompletionParameters>() {
         val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: return
 
         val allKeys = JsonKeyNavigator.getAllKeys(psiFile)
-        LOG.warn("TRANSLOCO-COMPLETE: Found ${allKeys.size} keys in ${file.name}")
+        LOG.debug("TRANSLOCO-COMPLETE: Found ${allKeys.size} keys in ${file.name}")
 
         for (keyPath in allKeys) {
             // If we have a scope prefix, add it to the key

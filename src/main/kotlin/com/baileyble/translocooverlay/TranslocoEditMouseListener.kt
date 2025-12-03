@@ -46,7 +46,7 @@ class TranslocoEditMouseListener : EditorMouseListener {
             return
         }
 
-        LOG.warn("TRANSLOCO-EDIT: Ctrl+Shift+Click detected on transloco key")
+        LOG.debug("TRANSLOCO-EDIT: Ctrl+Shift+Click detected on transloco key")
 
         // Consume the event to prevent default handling
         event.consume()

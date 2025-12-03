@@ -403,13 +403,20 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         val keyPath = buildKeyPath(jsonProperty)
         if (keyPath.isBlank()) return null
 
-        LOG.warn("TRANSLOCO-USAGES: Looking for usages of key '$keyPath'")
-
         // Determine if this is a scoped file
         val file = element.containingFile?.virtualFile ?: return null
         val scopePrefix = getScopeFromFilePath(file.path)
 
+        LOG.warn("TRANSLOCO-USAGES: Looking for usages of key '$keyPath' (scope: $scopePrefix)")
+
         val usages = mutableListOf<PsiElement>()
+
+        // Build all possible key variations to search for
+        val searchKeys = mutableSetOf<String>()
+        searchKeys.add(keyPath)  // e.g., "householdContactInformation.removeSecondPhone"
+        if (scopePrefix != null) {
+            searchKeys.add("$scopePrefix.$keyPath")  // e.g., "eligibility.householdContactInformation.removeSecondPhone"
+        }
 
         // Search in all HTML files
         val htmlFiles = FilenameIndex.getAllFilesByExt(project, "html", GlobalSearchScope.projectScope(project))
@@ -418,16 +425,9 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             val psiFile = PsiManager.getInstance(project).findFile(htmlFile) ?: continue
             val text = psiFile.text
 
-            // Search for the key in various patterns
-            val searchKeys = mutableListOf(keyPath)
-            if (scopePrefix != null) {
-                searchKeys.add("$scopePrefix.$keyPath")
-            }
-
             for (searchKey in searchKeys) {
-                // Check for pipe syntax: 'key' | transloco
-                if (text.contains("'$searchKey'") || text.contains("\"$searchKey\"")) {
-                    // Find the exact position(s) of the key
+                // Check for the key in any string context
+                if (text.contains(searchKey)) {
                     findKeyOccurrences(psiFile, searchKey).forEach { occurrence ->
                         usages.add(occurrence)
                     }
@@ -441,13 +441,8 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             val psiFile = PsiManager.getInstance(project).findFile(tsFile) ?: continue
             val text = psiFile.text
 
-            val searchKeys = mutableListOf(keyPath)
-            if (scopePrefix != null) {
-                searchKeys.add("$scopePrefix.$keyPath")
-            }
-
             for (searchKey in searchKeys) {
-                if (text.contains("'$searchKey'") || text.contains("\"$searchKey\"")) {
+                if (text.contains(searchKey)) {
                     findKeyOccurrences(psiFile, searchKey).forEach { occurrence ->
                         usages.add(occurrence)
                     }
@@ -462,17 +457,22 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
     /**
      * Get the scope prefix from the file path (for scoped translations).
+     * Handles paths like: libs/external/eligibility/assets/i18n/en.json -> "eligibility"
      */
     private fun getScopeFromFilePath(path: String): String? {
-        // Look for patterns like /eligibility/i18n/en.json -> scope = "eligibility"
-        val parts = path.replace("\\", "/").split("/")
+        val commonFolders = listOf("assets", "src", "app", "libs", "apps", "i18n", "locale", "translations", "external")
+        val parts = path.replace("\\", "/").split("/").filter { it.isNotBlank() }
+
+        // Find i18n folder and look backwards for a meaningful scope name
         val i18nIndex = parts.indexOfFirst { it.equals("i18n", ignoreCase = true) }
 
         if (i18nIndex > 0) {
-            val potentialScope = parts[i18nIndex - 1]
-            // Make sure it's not a common folder name
-            if (potentialScope !in listOf("assets", "src", "app", "libs", "apps")) {
-                return potentialScope
+            // Walk backwards from i18n to find a non-common folder name
+            for (i in i18nIndex - 1 downTo 0) {
+                val folder = parts[i]
+                if (folder.lowercase() !in commonFolders && !folder.contains(".")) {
+                    return folder
+                }
             }
         }
 
@@ -485,29 +485,23 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
     private fun findKeyOccurrences(file: com.intellij.psi.PsiFile, key: String): List<PsiElement> {
         val occurrences = mutableListOf<PsiElement>()
         val text = file.text
+        val processedOffsets = mutableSetOf<Int>()
 
-        // Find all occurrences of the key
+        // Find all occurrences of the key (with quotes or as part of larger string)
         var index = 0
         while (true) {
-            val singleQuotePattern = "'$key'"
-            val doubleQuotePattern = "\"$key\""
-
-            val singleIndex = text.indexOf(singleQuotePattern, index)
-            val doubleIndex = text.indexOf(doubleQuotePattern, index)
-
-            val foundIndex = when {
-                singleIndex >= 0 && doubleIndex >= 0 -> minOf(singleIndex, doubleIndex)
-                singleIndex >= 0 -> singleIndex
-                doubleIndex >= 0 -> doubleIndex
-                else -> -1
-            }
-
+            val foundIndex = text.indexOf(key, index)
             if (foundIndex < 0) break
 
-            // Find the PSI element at this offset
-            val element = file.findElementAt(foundIndex + 1) // +1 to get inside the string
-            if (element != null) {
-                occurrences.add(element)
+            // Avoid duplicates
+            if (foundIndex !in processedOffsets) {
+                processedOffsets.add(foundIndex)
+
+                // Find the PSI element at this offset
+                val element = file.findElementAt(foundIndex)
+                if (element != null) {
+                    occurrences.add(element)
+                }
             }
 
             index = foundIndex + 1

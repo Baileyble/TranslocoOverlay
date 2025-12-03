@@ -2,15 +2,11 @@ package com.baileyble.translocooverlay
 
 import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
-import com.intellij.json.psi.JsonElementGenerator
 import com.intellij.json.psi.JsonFile
-import com.intellij.json.psi.JsonStringLiteral
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
@@ -31,16 +27,7 @@ object TranslocoEditUtil {
     private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
 
     /**
-     * Data class for translation info.
-     */
-    data class TranslationInfo(
-        val lang: String,
-        val value: String?,
-        val keyInFile: String
-    )
-
-    /**
-     * Edit a translation key. Shows dialog and updates the JSON file.
+     * Edit a translation key. Shows the full dialog with all languages.
      */
     fun editTranslation(project: Project, element: PsiElement) {
         val key = extractTranslocoKey(element)
@@ -49,50 +36,96 @@ object TranslocoEditUtil {
             return
         }
 
-        LOG.warn("TRANSLOCO-EDIT: Editing key '$key'")
+        LOG.warn("TRANSLOCO-EDIT: Opening editor for key '$key'")
 
-        // Find translation files and current values
-        val translationData = findTranslationData(project, key)
+        // Find all translation data for this key
+        val (translations, keyInFile, isNewKey) = findAllTranslations(project, key)
 
-        if (translationData.isEmpty()) {
-            ApplicationManager.getApplication().invokeLater({
-                Messages.showWarningDialog(
-                    project,
-                    "Could not find translation key '$key' in any translation file.",
-                    "Translation Not Found"
-                )
-            }, ModalityState.defaultModalityState())
-            return
-        }
-
-        // For simplicity, edit the primary (English) translation
-        val primaryEntry = translationData.entries.firstOrNull { it.key.lang == "en" }
-            ?: translationData.entries.first()
-
-        val currentValue = primaryEntry.key.value ?: ""
-        val langDisplay = primaryEntry.key.lang.uppercase()
-        val file = primaryEntry.value
-        val keyInFile = primaryEntry.key.keyInFile
-
-        // Show input dialog on EDT with proper modality
+        // Show dialog on EDT
         ApplicationManager.getApplication().invokeLater({
-            val newValue = Messages.showInputDialog(
-                project,
-                "Edit translation for '$key' ($langDisplay):",
-                "Edit Translation",
-                Messages.getQuestionIcon(),
-                currentValue,
-                null
+            val dialog = TranslocoEditDialog(
+                project = project,
+                translationKey = key,
+                keyInFile = keyInFile,
+                translations = translations,
+                isNewKey = isNewKey
             )
 
-            if (newValue != null && newValue != currentValue) {
-                // Write the new value in a write action
-                WriteCommandAction.runWriteCommandAction(project, "Edit Transloco Translation", null, {
-                    updateTranslation(project, file, keyInFile, newValue)
-                })
-                LOG.warn("TRANSLOCO-EDIT: Updated '$key' to '$newValue'")
-            }
+            dialog.show()
         }, ModalityState.defaultModalityState())
+    }
+
+    /**
+     * Find all translations for a key across all language files.
+     * Returns: (translations map, keyInFile, isNewKey)
+     */
+    private fun findAllTranslations(
+        project: Project,
+        key: String
+    ): Triple<MutableMap<String, TranslocoEditDialog.TranslationEntry>, String, Boolean> {
+        val translations = mutableMapOf<String, TranslocoEditDialog.TranslationEntry>()
+        var keyInFile = key
+        var foundAny = false
+
+        // Try main translation files first
+        val mainFiles = TranslationFileFinder.findTranslationFiles(project)
+        for (file in mainFiles) {
+            val lang = file.nameWithoutExtension
+            val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
+            val value = JsonKeyNavigator.getStringValue(psiFile, key)
+
+            if (value != null) {
+                translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
+                foundAny = true
+            } else {
+                // File exists but key doesn't - can create
+                translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
+            }
+        }
+
+        // If not found in main files, try scoped resolution
+        if (!foundAny) {
+            val keyParts = key.split(".")
+            if (keyParts.size >= 2) {
+                val potentialScope = keyParts[0]
+                val keyWithoutScope = keyParts.drop(1).joinToString(".")
+
+                val scopedFiles = TranslationFileFinder.findScopedTranslationFiles(project, potentialScope)
+                for (file in scopedFiles) {
+                    val lang = file.nameWithoutExtension
+                    val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
+                    val value = JsonKeyNavigator.getStringValue(psiFile, keyWithoutScope)
+
+                    if (value != null) {
+                        translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
+                        keyInFile = keyWithoutScope
+                        foundAny = true
+                    } else {
+                        translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
+                        keyInFile = keyWithoutScope
+                    }
+                }
+            }
+        }
+
+        // Also try all translation files for a broader search
+        if (!foundAny) {
+            val allFiles = TranslationFileFinder.findAllTranslationFiles(project)
+            for (file in allFiles) {
+                val lang = file.nameWithoutExtension
+                if (translations.containsKey(lang)) continue
+
+                val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
+                val value = JsonKeyNavigator.getStringValue(psiFile, key)
+
+                if (value != null) {
+                    translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
+                    foundAny = true
+                }
+            }
+        }
+
+        return Triple(translations, keyInFile, !foundAny)
     }
 
     /**
@@ -194,75 +227,5 @@ object TranslocoEditUtil {
         }
 
         return null
-    }
-
-    /**
-     * Find translation data for the given key.
-     */
-    private fun findTranslationData(
-        project: Project,
-        key: String
-    ): Map<TranslationInfo, VirtualFile> {
-        val result = mutableMapOf<TranslationInfo, VirtualFile>()
-
-        // Try main translation files
-        val mainFiles = TranslationFileFinder.findTranslationFiles(project)
-        for (file in mainFiles) {
-            val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
-            val value = JsonKeyNavigator.getStringValue(psiFile, key)
-            if (value != null) {
-                val lang = file.nameWithoutExtension
-                result[TranslationInfo(lang, value, key)] = file
-            }
-        }
-
-        // Try scoped resolution
-        if (result.isEmpty()) {
-            val keyParts = key.split(".")
-            if (keyParts.size >= 2) {
-                val potentialScope = keyParts[0]
-                val keyWithoutScope = keyParts.drop(1).joinToString(".")
-
-                val scopedFiles = TranslationFileFinder.findScopedTranslationFiles(project, potentialScope)
-                for (file in scopedFiles) {
-                    val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
-                    val value = JsonKeyNavigator.getStringValue(psiFile, keyWithoutScope)
-                    if (value != null) {
-                        val lang = file.nameWithoutExtension
-                        result[TranslationInfo(lang, value, keyWithoutScope)] = file
-                    }
-                }
-            }
-        }
-
-        return result
-    }
-
-    /**
-     * Update the translation value in the JSON file.
-     */
-    private fun updateTranslation(
-        project: Project,
-        file: VirtualFile,
-        keyPath: String,
-        newValue: String
-    ) {
-        val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: return
-
-        val navResult = JsonKeyNavigator.navigateToKey(psiFile, keyPath)
-        if (!navResult.found || navResult.value == null) {
-            LOG.warn("TRANSLOCO-EDIT: Could not find key '$keyPath' for update")
-            return
-        }
-
-        val currentValue = navResult.value
-        if (currentValue is JsonStringLiteral) {
-            val generator = JsonElementGenerator(project)
-            val newLiteral = generator.createStringLiteral(newValue)
-            currentValue.replace(newLiteral)
-            LOG.warn("TRANSLOCO-EDIT: Successfully updated value in ${file.name}")
-        } else {
-            LOG.warn("TRANSLOCO-EDIT: Value is not a string literal, cannot update")
-        }
     }
 }

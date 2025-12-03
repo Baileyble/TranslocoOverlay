@@ -11,9 +11,12 @@
         <ul>
             <li>Hover over translation keys to see their values</li>
             <li>Ctrl+Click to navigate to JSON translation files</li>
-            <li>Ctrl+Shift+Click to edit translation values</li>
+            <li>Ctrl+Shift+Click to open translation editor dialog</li>
+            <li>Edit all language translations in one dialog</li>
+            <li>Google Translate integration for auto-translation</li>
+            <li>Create new translation keys that don't exist yet</li>
             <li>Autocomplete for translation keys</li>
-            <li>Toggle inline translation preview (Ctrl+Alt+T or Tools menu)</li>
+            <li>Toggle inline translation preview (Ctrl+Alt+T)</li>
         </ul>
 
         <h3>Supported Patterns</h3>

@@ -7,7 +7,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 
@@ -38,17 +37,15 @@ object TranslocoEditUtil {
 
         LOG.warn("TRANSLOCO-EDIT: Opening editor for key '$key'")
 
-        // Find all translation data for this key
-        val (translations, keyInFile, isNewKey) = findAllTranslations(project, key)
+        // Find all translation locations for this key
+        val locations = findAllTranslationLocations(project, key)
 
         // Show dialog on EDT
         ApplicationManager.getApplication().invokeLater({
             val dialog = TranslocoEditDialog(
                 project = project,
                 translationKey = key,
-                keyInFile = keyInFile,
-                translations = translations,
-                isNewKey = isNewKey
+                locations = locations
             )
 
             dialog.show()
@@ -56,20 +53,19 @@ object TranslocoEditUtil {
     }
 
     /**
-     * Find all translations for a key across all language files.
-     * Returns: (translations map, keyInFile, isNewKey)
+     * Find all translation locations for a key across different file locations.
+     * Returns a list of TranslationLocation objects, each representing a different i18n folder.
      */
-    private fun findAllTranslations(
+    private fun findAllTranslationLocations(
         project: Project,
         key: String
-    ): Triple<MutableMap<String, TranslocoEditDialog.TranslationEntry>, String, Boolean> {
-        val translations = mutableMapOf<String, TranslocoEditDialog.TranslationEntry>()
-        var keyInFile = key
-        var foundAny = false
+    ): List<TranslocoEditDialog.TranslationLocation> {
+        val locations = mutableListOf<TranslocoEditDialog.TranslationLocation>()
+        val processedPaths = mutableSetOf<String>()
 
-        LOG.warn("TRANSLOCO-EDIT: Finding translations for key '$key'")
+        LOG.warn("TRANSLOCO-EDIT: Finding all locations for key '$key'")
 
-        // Strategy 1: Try scoped resolution FIRST (for Nx monorepo patterns)
+        // Strategy 1: Try scoped resolution (for Nx monorepo patterns)
         val keyParts = key.split(".")
         if (keyParts.size >= 2) {
             val potentialScope = keyParts[0]
@@ -78,72 +74,155 @@ object TranslocoEditUtil {
             LOG.warn("TRANSLOCO-EDIT: Trying scoped resolution: scope='$potentialScope', key='$keyWithoutScope'")
 
             val scopedFiles = TranslationFileFinder.findScopedTranslationFiles(project, potentialScope)
-            LOG.warn("TRANSLOCO-EDIT: Found ${scopedFiles.size} scoped files for '$potentialScope'")
+            val scopedByPath = scopedFiles.groupBy { it.parent?.path ?: "" }
 
-            for (file in scopedFiles) {
-                val lang = file.nameWithoutExtension
-                LOG.warn("TRANSLOCO-EDIT: Checking scoped file: ${file.path}")
+            for ((path, files) in scopedByPath) {
+                if (path.isBlank() || processedPaths.contains(path)) continue
+                processedPaths.add(path)
 
-                val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
-                val value = JsonKeyNavigator.getStringValue(psiFile, keyWithoutScope)
+                val translations = mutableMapOf<String, TranslocoEditDialog.TranslationEntry>()
+                var foundAny = false
 
-                LOG.warn("TRANSLOCO-EDIT: Value for '$keyWithoutScope' in $lang: ${value?.take(50) ?: "null"}")
+                for (file in files) {
+                    val lang = file.nameWithoutExtension
+                    val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
+                    val value = JsonKeyNavigator.getStringValue(psiFile, keyWithoutScope)
 
-                if (value != null) {
-                    translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
-                    keyInFile = keyWithoutScope
-                    foundAny = true
-                } else {
-                    translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
-                    keyInFile = keyWithoutScope
+                    if (value != null) {
+                        translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
+                        foundAny = true
+                    } else {
+                        translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
+                    }
+                }
+
+                if (translations.isNotEmpty()) {
+                    val displayPath = getDisplayPath(path, project)
+                    locations.add(
+                        TranslocoEditDialog.TranslationLocation(
+                            displayPath = displayPath,
+                            fullPath = path,
+                            keyInFile = keyWithoutScope,
+                            translations = translations,
+                            isNewKey = !foundAny
+                        )
+                    )
                 }
             }
         }
 
         // Strategy 2: Try main translation files with full key
-        if (!foundAny) {
-            val mainFiles = TranslationFileFinder.findTranslationFiles(project)
-            LOG.warn("TRANSLOCO-EDIT: Trying ${mainFiles.size} main translation files")
+        val mainFiles = TranslationFileFinder.findTranslationFiles(project)
+        val mainByPath = mainFiles.groupBy { it.parent?.path ?: "" }
 
-            for (file in mainFiles) {
+        for ((path, files) in mainByPath) {
+            if (path.isBlank() || processedPaths.contains(path)) continue
+            processedPaths.add(path)
+
+            val translations = mutableMapOf<String, TranslocoEditDialog.TranslationEntry>()
+            var foundAny = false
+
+            for (file in files) {
                 val lang = file.nameWithoutExtension
                 val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
                 val value = JsonKeyNavigator.getStringValue(psiFile, key)
 
-                LOG.warn("TRANSLOCO-EDIT: Value for '$key' in ${file.name}: ${value?.take(50) ?: "null"}")
-
                 if (value != null) {
                     translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
                     foundAny = true
-                } else if (!translations.containsKey(lang)) {
-                    // Only add empty entry if we don't already have an entry for this lang
+                } else {
                     translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
                 }
+            }
+
+            if (translations.isNotEmpty()) {
+                val displayPath = getDisplayPath(path, project)
+                locations.add(
+                    TranslocoEditDialog.TranslationLocation(
+                        displayPath = displayPath,
+                        fullPath = path,
+                        keyInFile = key,
+                        translations = translations,
+                        isNewKey = !foundAny
+                    )
+                )
             }
         }
 
         // Strategy 3: Try all translation files for a broader search
-        if (!foundAny) {
-            LOG.warn("TRANSLOCO-EDIT: Trying broader search in all translation files")
-            val allFiles = TranslationFileFinder.findAllTranslationFiles(project)
+        val allFiles = TranslationFileFinder.findAllTranslationFiles(project)
+        val allByPath = allFiles.groupBy { it.parent?.path ?: "" }
 
-            for (file in allFiles) {
+        for ((path, files) in allByPath) {
+            if (path.isBlank() || processedPaths.contains(path)) continue
+            processedPaths.add(path)
+
+            val translations = mutableMapOf<String, TranslocoEditDialog.TranslationEntry>()
+            var foundAny = false
+
+            for (file in files) {
                 val lang = file.nameWithoutExtension
-                if (translations.containsKey(lang) && translations[lang]?.exists == true) continue
-
                 val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
                 val value = JsonKeyNavigator.getStringValue(psiFile, key)
 
                 if (value != null) {
                     translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
                     foundAny = true
+                } else {
+                    translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
                 }
+            }
+
+            // Only add if we found actual translations here
+            if (foundAny && translations.isNotEmpty()) {
+                val displayPath = getDisplayPath(path, project)
+                locations.add(
+                    TranslocoEditDialog.TranslationLocation(
+                        displayPath = displayPath,
+                        fullPath = path,
+                        keyInFile = key,
+                        translations = translations,
+                        isNewKey = false
+                    )
+                )
             }
         }
 
-        LOG.warn("TRANSLOCO-EDIT: Final result - foundAny=$foundAny, translations=${translations.keys}, keyInFile='$keyInFile'")
+        // Sort: locations with existing keys first, then by path
+        val sorted = locations.sortedWith(compareBy({ it.isNewKey }, { it.displayPath }))
 
-        return Triple(translations, keyInFile, !foundAny)
+        LOG.warn("TRANSLOCO-EDIT: Found ${sorted.size} locations for key '$key'")
+        return sorted
+    }
+
+    /**
+     * Get a shortened display path for tabs.
+     */
+    private fun getDisplayPath(fullPath: String, project: Project): String {
+        val basePath = project.basePath ?: return fullPath
+
+        // Remove project base path
+        var display = if (fullPath.startsWith(basePath)) {
+            fullPath.removePrefix(basePath).removePrefix("/")
+        } else {
+            fullPath
+        }
+
+        // Shorten common patterns
+        display = display
+            .replace("libs/", "")
+            .replace("apps/", "")
+            .replace("/src/assets/i18n", "")
+            .replace("/assets/i18n", "")
+            .replace("src/", "")
+
+        // If still too long, take last 2-3 path segments
+        val parts = display.split("/").filter { it.isNotBlank() }
+        if (parts.size > 3) {
+            return ".../" + parts.takeLast(2).joinToString("/")
+        }
+
+        return display.ifBlank { "main" }
     }
 
     /**

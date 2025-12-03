@@ -18,9 +18,9 @@ import com.intellij.psi.PsiManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
 import java.awt.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -32,6 +32,7 @@ import javax.swing.*
 /**
  * Dialog for editing Transloco translations across all languages.
  * Features:
+ * - Tabbed interface for multiple file locations
  * - View/edit all language translations for a key
  * - Create new keys if they don't exist
  * - Google Translate integration for auto-translation
@@ -39,9 +40,7 @@ import javax.swing.*
 class TranslocoEditDialog(
     private val project: Project,
     private val translationKey: String,
-    private val keyInFile: String,  // The actual key path in JSON (might differ for scoped)
-    private val translations: MutableMap<String, TranslationEntry>,
-    private val isNewKey: Boolean = false
+    private val locations: List<TranslationLocation>
 ) : DialogWrapper(project, true) {
 
     companion object {
@@ -71,26 +70,58 @@ class TranslocoEditDialog(
         )
     }
 
+    /**
+     * Represents a translation file location with all its language files.
+     */
+    data class TranslationLocation(
+        val displayPath: String,           // Shortened path for tab display
+        val fullPath: String,              // Full path for tooltip
+        val keyInFile: String,             // The key path within JSON files
+        val translations: MutableMap<String, TranslationEntry>,
+        val isNewKey: Boolean
+    )
+
     data class TranslationEntry(
         var value: String,
         val file: VirtualFile?,
         val exists: Boolean
     )
 
-    private val textFields = mutableMapOf<String, JBTextField>()
-    private val translateButtons = mutableMapOf<String, JButton>()
+    // Text fields per location and language
+    private val locationTextFields = mutableMapOf<Int, MutableMap<String, JBTextField>>()
+    private var tabbedPane: JBTabbedPane? = null
 
     init {
-        title = if (isNewKey) "Create Translation: $translationKey" else "Edit Translation: $translationKey"
+        title = "Edit Translation: $translationKey"
         init()
     }
 
     override fun createCenterPanel(): JComponent {
         val mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
-        mainPanel.preferredSize = Dimension(JBUI.scale(650), JBUI.scale(450))
+        mainPanel.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(500))
         mainPanel.border = JBUI.Borders.empty(8)
 
         // Header with key info
+        val headerPanel = createHeaderPanel()
+        mainPanel.add(headerPanel, BorderLayout.NORTH)
+
+        // Content - either tabs or single panel
+        val contentPanel = if (locations.size > 1) {
+            createTabbedContent()
+        } else if (locations.isNotEmpty()) {
+            createSingleLocationPanel(0, locations[0])
+        } else {
+            JPanel().apply {
+                add(JBLabel("No translation files found"))
+            }
+        }
+
+        mainPanel.add(contentPanel, BorderLayout.CENTER)
+
+        return mainPanel
+    }
+
+    private fun createHeaderPanel(): JPanel {
         val headerPanel = JPanel(GridBagLayout())
         headerPanel.border = JBUI.Borders.emptyBottom(12)
         val gbc = GridBagConstraints().apply {
@@ -101,7 +132,7 @@ class TranslocoEditDialog(
             weightx = 1.0
         }
 
-        // Key label with monospace font for the key itself
+        // Key label with monospace font
         val keyPrefix = JBLabel("Key: ")
         keyPrefix.font = keyPrefix.font.deriveFont(Font.BOLD)
 
@@ -114,48 +145,99 @@ class TranslocoEditDialog(
         keyPanel.add(keyValue)
         headerPanel.add(keyPanel, gbc)
 
-        if (isNewKey) {
+        // Show location count info if multiple
+        if (locations.size > 1) {
             gbc.gridy = 1
             gbc.insets = JBUI.insets(4, 0, 0, 0)
-            val infoLabel = JBLabel("This key doesn't exist yet. Fill in values to create it.")
-            infoLabel.foreground = JBColor(Color(80, 140, 80), Color(120, 180, 120))
+            val infoLabel = JBLabel("Found in ${locations.size} locations - use tabs to switch between them")
+            infoLabel.foreground = JBColor(Color(100, 100, 140), Color(160, 160, 200))
             infoLabel.font = infoLabel.font.deriveFont(Font.ITALIC)
             headerPanel.add(infoLabel, gbc)
         }
 
-        mainPanel.add(headerPanel, BorderLayout.NORTH)
+        return headerPanel
+    }
 
-        // Translations panel with scroll
+    private fun createTabbedContent(): JComponent {
+        tabbedPane = JBTabbedPane()
+
+        locations.forEachIndexed { index, location ->
+            val panel = createSingleLocationPanel(index, location)
+            val tabTitle = location.displayPath
+            tabbedPane!!.addTab(tabTitle, panel)
+            tabbedPane!!.setToolTipTextAt(index, location.fullPath)
+        }
+
+        return tabbedPane!!
+    }
+
+    private fun createSingleLocationPanel(locationIndex: Int, location: TranslationLocation): JComponent {
+        val translations = location.translations
+        locationTextFields[locationIndex] = mutableMapOf()
+        val textFields = locationTextFields[locationIndex]!!
+
         val translationsPanel = JPanel(GridBagLayout())
         translationsPanel.border = JBUI.Borders.empty(8)
         val rowGbc = GridBagConstraints()
         var row = 0
 
-        // Add English first (source for translations)
-        addLanguageRow(translationsPanel, "en", true, rowGbc, row++)
-
-        // Add separator with label
+        // File path info
         rowGbc.apply {
             gridx = 0
             gridy = row++
             gridwidth = 3
             fill = GridBagConstraints.HORIZONTAL
-            insets = JBUI.insets(12, 0, 8, 0)
+            insets = JBUI.insets(0, 0, 8, 0)
             weightx = 1.0
         }
-        val separatorPanel = JPanel(BorderLayout())
-        separatorPanel.add(JSeparator(), BorderLayout.CENTER)
-        translationsPanel.add(separatorPanel, rowGbc)
+        val pathLabel = JBLabel("Path: ${location.fullPath}")
+        pathLabel.font = pathLabel.font.deriveFont(Font.PLAIN, pathLabel.font.size - 1f)
+        pathLabel.foreground = JBColor.GRAY
+        translationsPanel.add(pathLabel, rowGbc)
+
+        // Key in file info (if different from display key)
+        if (location.keyInFile != translationKey) {
+            rowGbc.gridy = row++
+            val keyInFileLabel = JBLabel("Key in file: ${location.keyInFile}")
+            keyInFileLabel.font = keyInFileLabel.font.deriveFont(Font.PLAIN, keyInFileLabel.font.size - 1f)
+            keyInFileLabel.foreground = JBColor.GRAY
+            translationsPanel.add(keyInFileLabel, rowGbc)
+        }
+
+        // New key indicator
+        if (location.isNewKey) {
+            rowGbc.gridy = row++
+            val newKeyLabel = JBLabel("This key doesn't exist yet. Fill in values to create it.")
+            newKeyLabel.foreground = JBColor(Color(80, 140, 80), Color(120, 180, 120))
+            newKeyLabel.font = newKeyLabel.font.deriveFont(Font.ITALIC)
+            translationsPanel.add(newKeyLabel, rowGbc)
+        }
+
+        // Add separator
+        rowGbc.apply {
+            gridy = row++
+            insets = JBUI.insets(8, 0, 8, 0)
+        }
+        translationsPanel.add(JSeparator(), rowGbc)
+
+        // Add English first (source for translations)
+        addLanguageRow(translationsPanel, "en", true, rowGbc, row++, translations, textFields)
+
+        // Add separator
+        rowGbc.apply {
+            gridy = row++
+            insets = JBUI.insets(12, 0, 8, 0)
+        }
+        translationsPanel.add(JSeparator(), rowGbc)
 
         // Add "Translate All" button row
         rowGbc.apply {
             gridy = row++
-            gridwidth = 3
             insets = JBUI.insets(0, 0, 12, 0)
         }
         val translateAllButton = JButton("Translate All from English")
         translateAllButton.toolTipText = "Auto-translate empty fields using Google Translate"
-        translateAllButton.addActionListener { translateAllFromEnglish() }
+        translateAllButton.addActionListener { translateAllFromEnglish(textFields, translations) }
         val translateAllPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
         translateAllPanel.add(translateAllButton)
         translationsPanel.add(translateAllPanel, rowGbc)
@@ -163,7 +245,7 @@ class TranslocoEditDialog(
         // Add other languages
         val otherLangs = translations.keys.filter { it != "en" }.sorted()
         for (lang in otherLangs) {
-            addLanguageRow(translationsPanel, lang, false, rowGbc, row++)
+            addLanguageRow(translationsPanel, lang, false, rowGbc, row++, translations, textFields)
         }
 
         // Add any common languages not already present
@@ -172,7 +254,7 @@ class TranslocoEditDialog(
                 val langFiles = TranslationFileFinder.findTranslationFilesForLanguage(project, lang)
                 if (langFiles.isNotEmpty()) {
                     translations[lang] = TranslationEntry("", langFiles.first(), false)
-                    addLanguageRow(translationsPanel, lang, false, rowGbc, row++)
+                    addLanguageRow(translationsPanel, lang, false, rowGbc, row++, translations, textFields)
                 }
             }
         }
@@ -190,12 +272,18 @@ class TranslocoEditDialog(
         scrollPane.verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
         scrollPane.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
 
-        mainPanel.add(scrollPane, BorderLayout.CENTER)
-
-        return mainPanel
+        return scrollPane
     }
 
-    private fun addLanguageRow(panel: JPanel, lang: String, isSource: Boolean, gbc: GridBagConstraints, row: Int) {
+    private fun addLanguageRow(
+        panel: JPanel,
+        lang: String,
+        isSource: Boolean,
+        gbc: GridBagConstraints,
+        row: Int,
+        translations: MutableMap<String, TranslationEntry>,
+        textFields: MutableMap<String, JBTextField>
+    ) {
         val entry = translations[lang]
         val langName = LANGUAGE_NAMES[lang] ?: lang.uppercase()
 
@@ -262,8 +350,7 @@ class TranslocoEditDialog(
             val translateBtn = JButton("Translate")
             translateBtn.preferredSize = Dimension(JBUI.scale(85), JBUI.scale(26))
             translateBtn.toolTipText = "Translate from English using Google Translate"
-            translateBtn.addActionListener { translateSingleLanguage(lang) }
-            translateButtons[lang] = translateBtn
+            translateBtn.addActionListener { translateSingleLanguage(lang, textFields) }
             panel.add(translateBtn, gbc)
         } else {
             // Add placeholder for alignment
@@ -273,7 +360,7 @@ class TranslocoEditDialog(
         }
     }
 
-    private fun translateSingleLanguage(targetLang: String) {
+    private fun translateSingleLanguage(targetLang: String, textFields: MutableMap<String, JBTextField>) {
         val englishText = textFields["en"]?.text ?: return
         if (englishText.isBlank()) {
             Messages.showWarningDialog(project, "Please enter English text first.", "No Source Text")
@@ -287,7 +374,10 @@ class TranslocoEditDialog(
         }
     }
 
-    private fun translateAllFromEnglish() {
+    private fun translateAllFromEnglish(
+        textFields: MutableMap<String, JBTextField>,
+        translations: MutableMap<String, TranslationEntry>
+    ) {
         val englishText = textFields["en"]?.text ?: return
         if (englishText.isBlank()) {
             Messages.showWarningDialog(project, "Please enter English text first.", "No Source Text")
@@ -323,7 +413,6 @@ class TranslocoEditDialog(
                 val response = BufferedReader(InputStreamReader(connection.inputStream)).use { it.readText() }
 
                 // Parse the response - it's a nested JSON array
-                // Format: [[["translated text","original text",null,null,10]],null,"en",...]
                 val translated = parseGoogleTranslateResponse(response)
                 callback(translated ?: text)
 
@@ -336,8 +425,6 @@ class TranslocoEditDialog(
 
     private fun parseGoogleTranslateResponse(response: String): String? {
         try {
-            // Simple parsing of the Google Translate response
-            // The response is like: [[["Hola","Hello",null,null,10]],null,"en",...]
             val result = StringBuilder()
             var i = 0
             var depth = 0
@@ -362,12 +449,6 @@ class TranslocoEditDialog(
                             if (depth == 3 && !foundFirst) {
                                 result.append(currentString)
                                 foundFirst = true
-                            } else if (depth == 3 && foundFirst) {
-                                // Check if this is a continuation
-                                val nextNonSpace = response.substring(i + 1).trimStart()
-                                if (nextNonSpace.startsWith(",null") || nextNonSpace.startsWith("]")) {
-                                    // This was the source text, we already have what we need
-                                }
                             }
                             currentString = StringBuilder()
                         }
@@ -388,21 +469,25 @@ class TranslocoEditDialog(
     }
 
     override fun doOKAction() {
-        // Save all translations
+        // Save translations for all locations
         WriteCommandAction.runWriteCommandAction(project, "Update Translations", null, {
-            for ((lang, textField) in textFields) {
-                val newValue = textField.text
-                val entry = translations[lang] ?: continue
-                val file = entry.file ?: continue
+            locations.forEachIndexed { index, location ->
+                val textFields = locationTextFields[index] ?: return@forEachIndexed
 
-                if (newValue.isBlank()) continue
+                for ((lang, textField) in textFields) {
+                    val newValue = textField.text
+                    val entry = location.translations[lang] ?: continue
+                    val file = entry.file ?: continue
 
-                // Only update if value changed or it's a new key
-                if (newValue != entry.value || !entry.exists) {
-                    if (entry.exists) {
-                        updateTranslation(file, keyInFile, newValue)
-                    } else {
-                        createTranslation(file, keyInFile, newValue)
+                    if (newValue.isBlank()) continue
+
+                    // Only update if value changed or it's a new key
+                    if (newValue != entry.value || !entry.exists) {
+                        if (entry.exists) {
+                            updateTranslation(file, location.keyInFile, newValue)
+                        } else {
+                            createTranslation(file, location.keyInFile, newValue)
+                        }
                     }
                 }
             }

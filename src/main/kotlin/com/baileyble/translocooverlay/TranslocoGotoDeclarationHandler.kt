@@ -481,26 +481,42 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
     /**
      * Find occurrences of a key in a PSI file.
+     * Returns parent elements with more context for better display in "Choose Declaration" popup.
      */
     private fun findKeyOccurrences(file: com.intellij.psi.PsiFile, key: String): List<PsiElement> {
         val occurrences = mutableListOf<PsiElement>()
         val text = file.text
-        val processedOffsets = mutableSetOf<Int>()
+        val processedElements = mutableSetOf<PsiElement>()
 
-        // Find all occurrences of the key (with quotes or as part of larger string)
+        // Find all occurrences of the key
         var index = 0
         while (true) {
             val foundIndex = text.indexOf(key, index)
             if (foundIndex < 0) break
 
-            // Avoid duplicates
-            if (foundIndex !in processedOffsets) {
-                processedOffsets.add(foundIndex)
+            // Find the PSI element at this offset
+            val element = file.findElementAt(foundIndex)
+            if (element != null) {
+                // Walk up to find a meaningful parent element for better context
+                // Look for string literal, attribute, or expression
+                var contextElement: PsiElement = element
+                var depth = 0
+                while (depth < 5) {
+                    val parent = contextElement.parent ?: break
+                    val parentText = parent.text
 
-                // Find the PSI element at this offset
-                val element = file.findElementAt(foundIndex)
-                if (element != null) {
-                    occurrences.add(element)
+                    // Stop at reasonable boundaries that show good context
+                    if (parentText.length > 200) break  // Don't go too high
+                    if (parentText.contains("\n") && parentText.split("\n").size > 3) break  // Max 3 lines
+
+                    contextElement = parent
+                    depth++
+                }
+
+                // Avoid duplicates (same parent element)
+                if (contextElement !in processedElements) {
+                    processedElements.add(contextElement)
+                    occurrences.add(contextElement)
                 }
             }
 

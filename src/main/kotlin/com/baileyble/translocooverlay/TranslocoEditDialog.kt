@@ -600,22 +600,9 @@ class TranslocoEditDialog(
         // English row with prominent styling
         rowGbc.apply {
             gridy = row++
-            insets = JBUI.insets(0, 0, 4, 0)
+            insets = JBUI.insets(0, 0, 12, 0)
         }
         addLanguageRow(translationsPanel, "en", true, rowGbc, row - 1, translations, textFields, location)
-
-        // Translate All button - right aligned after English
-        rowGbc.apply {
-            gridy = row++
-            insets = JBUI.insets(4, 0, 16, 0)
-            anchor = GridBagConstraints.EAST
-        }
-        val translateAllButton = JButton("Translate All from English")
-        translateAllButton.toolTipText = "Auto-translate empty fields using Google Translate"
-        translateAllButton.addActionListener { translateAllFromEnglish(textFields, translations) }
-        val translateAllPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
-        translateAllPanel.add(translateAllButton)
-        translationsPanel.add(translateAllPanel, rowGbc)
 
         // Add other languages
         val otherLangs = translations.keys.filter { it != "en" }.sorted()
@@ -634,6 +621,19 @@ class TranslocoEditDialog(
                 }
             }
         }
+
+        // Translate All button at the bottom
+        rowGbc.apply {
+            gridy = row++
+            gridwidth = 3
+            insets = JBUI.insets(16, 0, 0, 0)
+            anchor = GridBagConstraints.EAST
+            fill = GridBagConstraints.NONE
+        }
+        val translateAllButton = JButton("Translate All from English")
+        translateAllButton.toolTipText = "Auto-translate empty fields using Google Translate"
+        translateAllButton.addActionListener { translateAllFromEnglish(textFields, translations) }
+        translationsPanel.add(translateAllButton, rowGbc)
 
         // Add vertical glue at the end
         rowGbc.apply {

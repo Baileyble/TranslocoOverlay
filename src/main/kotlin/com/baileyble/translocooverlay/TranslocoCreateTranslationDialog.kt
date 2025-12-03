@@ -39,6 +39,7 @@ import javax.swing.*
  * - Key name input field for the new translation key
  * - Translation method selector (Pipe or Directive)
  * - Automatic detection of existing *transloco directive context
+ * - Parameter detection and naming for Angular interpolations
  * - English value pre-filled with the selected text
  * - Other language inputs with translate buttons
  * - Location selector for choosing where to create the translation
@@ -86,6 +87,9 @@ class TranslocoCreateTranslationDialog(
         private val LET_VAR_PATTERN = Regex("""let\s+(\w+)""")
         private val READ_SCOPE_PATTERN = Regex("""read\s*:\s*['"]([^'"]+)['"]""")
 
+        // Regex for detecting Angular interpolations: {{expression}}
+        private val INTERPOLATION_PATTERN = Regex("""\{\{\s*([^}]+?)\s*\}\}""")
+
         fun getLastUsedLocation(): String? = PREFS.get(LAST_LOCATION_KEY, null)
         fun setLastUsedLocation(path: String) = PREFS.put(LAST_LOCATION_KEY, path)
         fun getLastUsedMethod(): String = PREFS.get(LAST_METHOD_KEY, "pipe")
@@ -115,6 +119,15 @@ class TranslocoCreateTranslationDialog(
     }
 
     /**
+     * Represents a detected parameter (Angular interpolation) in the selected text.
+     */
+    data class DetectedParam(
+        val originalExpression: String,  // e.g., "req.name.firstName"
+        val fullMatch: String,           // e.g., "{{req.name.firstName}}"
+        var paramName: String            // e.g., "firstName" (user can rename)
+    )
+
+    /**
      * Translation method options.
      */
     enum class TranslationMethod(val displayName: String, val description: String) {
@@ -135,16 +148,82 @@ class TranslocoCreateTranslationDialog(
     private lateinit var previewLabel: JBLabel
     private var detectedContext: DirectiveContext = DirectiveContext.NOT_FOUND
 
+    // Parameter handling
+    private val detectedParams = mutableListOf<DetectedParam>()
+    private val paramNameFields = mutableMapOf<Int, JBTextField>()
+    private lateinit var paramsPanel: JPanel
+    private var textWithoutParams: String = ""
+
     init {
         title = "Create Translation"
 
         // Detect directive context before initializing UI
         detectDirectiveContext()
 
+        // Detect parameters in selected text
+        detectParameters()
+
         init()
 
         // Find available locations
         findAvailableLocations()
+    }
+
+    /**
+     * Detect Angular interpolations in the selected text and extract them as parameters.
+     */
+    private fun detectParameters() {
+        val matches = INTERPOLATION_PATTERN.findAll(selectedText).toList()
+
+        // Track unique expressions to avoid duplicates
+        val seenExpressions = mutableSetOf<String>()
+
+        for (match in matches) {
+            val fullMatch = match.value  // e.g., "{{req.name.firstName}}"
+            val expression = match.groupValues[1].trim()  // e.g., "req.name.firstName"
+
+            if (expression !in seenExpressions) {
+                seenExpressions.add(expression)
+
+                // Generate a suggested param name from the expression
+                val suggestedName = generateParamName(expression)
+
+                detectedParams.add(DetectedParam(expression, fullMatch, suggestedName))
+            }
+        }
+
+        // Create the text with placeholders for translation
+        textWithoutParams = if (detectedParams.isEmpty()) {
+            selectedText
+        } else {
+            var result = selectedText
+            for (param in detectedParams) {
+                result = result.replace(param.fullMatch, "{{${param.paramName}}}")
+            }
+            result
+        }
+
+        LOG.debug("TRANSLOCO-CREATE: Detected ${detectedParams.size} parameters in selected text")
+    }
+
+    /**
+     * Generate a suggested parameter name from an expression.
+     * e.g., "req.name.firstName" -> "firstName"
+     * e.g., "user.email" -> "email"
+     */
+    private fun generateParamName(expression: String): String {
+        // Get the last part after the last dot
+        val lastPart = expression.substringAfterLast(".")
+
+        // Clean up: remove any non-alphanumeric characters, convert to camelCase
+        val cleaned = lastPart.replace(Regex("[^a-zA-Z0-9]"), "")
+
+        // Ensure it starts with lowercase
+        return if (cleaned.isNotEmpty()) {
+            cleaned.replaceFirstChar { it.lowercase() }
+        } else {
+            "param${detectedParams.size + 1}"
+        }
     }
 
     /**
@@ -197,7 +276,9 @@ class TranslocoCreateTranslationDialog(
 
     override fun createCenterPanel(): JComponent {
         val mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
-        mainPanel.preferredSize = Dimension(JBUI.scale(650), JBUI.scale(520))
+        // Increase height if we have parameters
+        val height = if (detectedParams.isNotEmpty()) 620 else 520
+        mainPanel.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(height))
         mainPanel.border = JBUI.Borders.empty(8)
 
         // Header section
@@ -331,10 +412,26 @@ class TranslocoCreateTranslationDialog(
         panel.add(methodPanel, gbc)
         row++
 
-        // Row 4: Preview
+        // Row 4: Parameters section (only if params detected)
+        if (detectedParams.isNotEmpty()) {
+            gbc.apply {
+                gridx = 0
+                gridy = row
+                gridwidth = 2
+                weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                insets = JBUI.insets(4, 0, 8, 0)
+            }
+            paramsPanel = createParamsPanel()
+            panel.add(paramsPanel, gbc)
+            row++
+        }
+
+        // Row 5: Preview
         gbc.apply {
             gridx = 0
             gridy = row
+            gridwidth = 1
             weightx = 0.0
             fill = GridBagConstraints.NONE
             insets = JBUI.insets(0, 0, 8, 8)
@@ -355,7 +452,7 @@ class TranslocoCreateTranslationDialog(
         panel.add(previewLabel, gbc)
         row++
 
-        // Row 5: Location selector
+        // Row 6: Location selector
         gbc.apply {
             gridx = 0
             gridy = row
@@ -390,6 +487,120 @@ class TranslocoCreateTranslationDialog(
         updatePreview()
 
         return panel
+    }
+
+    /**
+     * Create the parameters panel showing detected interpolations and allowing renaming.
+     */
+    private fun createParamsPanel(): JPanel {
+        val panel = JPanel(GridBagLayout())
+        panel.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(JBColor.border()),
+                "Detected Parameters (${detectedParams.size})"
+            ),
+            JBUI.Borders.empty(8)
+        )
+
+        val gbc = GridBagConstraints()
+
+        // Header row
+        gbc.apply {
+            gridx = 0
+            gridy = 0
+            anchor = GridBagConstraints.WEST
+            insets = JBUI.insets(0, 0, 8, 16)
+        }
+        val exprHeader = JBLabel("Expression")
+        exprHeader.font = exprHeader.font.deriveFont(Font.BOLD)
+        panel.add(exprHeader, gbc)
+
+        gbc.apply {
+            gridx = 1
+            insets = JBUI.insets(0, 0, 8, 16)
+        }
+        panel.add(JBLabel("→"), gbc)
+
+        gbc.apply {
+            gridx = 2
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(0, 0, 8, 0)
+        }
+        val nameHeader = JBLabel("Parameter Name")
+        nameHeader.font = nameHeader.font.deriveFont(Font.BOLD)
+        panel.add(nameHeader, gbc)
+
+        // Parameter rows
+        detectedParams.forEachIndexed { index, param ->
+            gbc.apply {
+                gridx = 0
+                gridy = index + 1
+                weightx = 0.0
+                fill = GridBagConstraints.NONE
+                anchor = GridBagConstraints.WEST
+                insets = JBUI.insets(2, 0, 2, 16)
+            }
+            val exprLabel = JBLabel(param.originalExpression)
+            exprLabel.font = Font(Font.MONOSPACED, Font.PLAIN, exprLabel.font.size)
+            exprLabel.foreground = JBColor.GRAY
+            panel.add(exprLabel, gbc)
+
+            gbc.apply {
+                gridx = 1
+                insets = JBUI.insets(2, 0, 2, 16)
+            }
+            panel.add(JBLabel("→"), gbc)
+
+            gbc.apply {
+                gridx = 2
+                weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                insets = JBUI.insets(2, 0, 2, 0)
+            }
+            val nameField = JBTextField(param.paramName)
+            nameField.toolTipText = "Parameter name to use in translation"
+            nameField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+                override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = onParamNameChanged(index)
+                override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = onParamNameChanged(index)
+                override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = onParamNameChanged(index)
+            })
+            paramNameFields[index] = nameField
+            panel.add(nameField, gbc)
+        }
+
+        return panel
+    }
+
+    /**
+     * Called when a parameter name is changed - updates the preview and translation text.
+     */
+    private fun onParamNameChanged(index: Int) {
+        val newName = paramNameFields[index]?.text?.trim() ?: return
+        if (newName.isNotBlank()) {
+            detectedParams[index].paramName = newName
+            updateTextWithParams()
+            updatePreview()
+            updateEnglishTextField()
+        }
+    }
+
+    /**
+     * Update the textWithoutParams to reflect current parameter names.
+     */
+    private fun updateTextWithParams() {
+        var result = selectedText
+        for (param in detectedParams) {
+            result = result.replace(param.fullMatch, "{{${param.paramName}}}")
+        }
+        textWithoutParams = result
+    }
+
+    /**
+     * Update the English text field with the parameterized text.
+     */
+    private fun updateEnglishTextField() {
+        languageTextFields["en"]?.text = textWithoutParams
     }
 
     private fun updateDirectiveInfo() {
@@ -436,7 +647,7 @@ class TranslocoCreateTranslationDialog(
         sectionLabel.font = sectionLabel.font.deriveFont(Font.BOLD, sectionLabel.font.size + 1f)
         translationsPanel.add(sectionLabel, gbc)
 
-        // English row (pre-filled with selected text)
+        // English row (pre-filled with parameterized text)
         addLanguageRow(translationsPanel, "en", true, gbc, row++)
 
         // Other common languages
@@ -503,17 +714,18 @@ class TranslocoCreateTranslationDialog(
         }
         panel.add(label, gbc)
 
-        // Column 1: Text field
+        // Column 1: Text field - use parameterized text for English
         gbc.apply {
             gridx = 1
             weightx = 1.0
             fill = GridBagConstraints.HORIZONTAL
             insets = JBUI.insets(4, 0, 4, 8)
         }
-        val textField = JBTextField(if (isEnglish) selectedText else "")
+        val initialText = if (isEnglish) textWithoutParams else ""
+        val textField = JBTextField(initialText)
         textField.preferredSize = Dimension(JBUI.scale(350), JBUI.scale(30))
         if (isEnglish) {
-            textField.toolTipText = "Source text (English)"
+            textField.toolTipText = "Source text (English) - use {{paramName}} for parameters"
         }
         languageTextFields[lang] = textField
         panel.add(textField, gbc)
@@ -543,7 +755,7 @@ class TranslocoCreateTranslationDialog(
             val processedPaths = mutableSetOf<String>()
 
             // Find all translation files and group by directory - must be in read action
-            val allFiles = ReadAction.compute<List<com.intellij.openapi.vfs.VirtualFile>, Throwable> {
+            val allFiles = ReadAction.compute<List<VirtualFile>, Throwable> {
                 TranslationFileFinder.findAllTranslationFiles(project)
             }
             val byPath = allFiles.groupBy { it.parent?.path ?: "" }
@@ -869,6 +1081,24 @@ class TranslocoCreateTranslationDialog(
             return ValidationInfo("English translation cannot be empty", languageTextFields["en"])
         }
 
+        // Validate parameter names
+        for ((index, field) in paramNameFields) {
+            val paramName = field.text.trim()
+            if (paramName.isBlank()) {
+                return ValidationInfo("Parameter name cannot be empty", field)
+            }
+            if (!paramName.matches(Regex("""^[a-zA-Z_][a-zA-Z0-9_]*$"""))) {
+                return ValidationInfo("Parameter name must be a valid identifier", field)
+            }
+        }
+
+        // Check for duplicate parameter names
+        val paramNames = paramNameFields.values.map { it.text.trim() }
+        val duplicates = paramNames.groupingBy { it }.eachCount().filter { it.value > 1 }
+        if (duplicates.isNotEmpty()) {
+            return ValidationInfo("Duplicate parameter names: ${duplicates.keys.joinToString()}")
+        }
+
         // Check if key already exists (accounting for scope)
         val keyToCheck = getEffectiveKeyForStorage(key)
         selectedLocation?.let { location ->
@@ -884,24 +1114,15 @@ class TranslocoCreateTranslationDialog(
             }
         }
 
-        // Warn if using directive without detected context
-        val selectedMethod = methodComboBox.selectedItem as? TranslationMethod
-        if (selectedMethod == TranslationMethod.DIRECTIVE && !detectedContext.found) {
-            // Just a warning, don't block - user might add the directive manually
-        }
-
         return null
     }
 
     /**
      * Get the key to use for storage in JSON, accounting for scope.
-     * If using directive with a scope, the key in JSON should NOT include the scope prefix.
      */
     private fun getEffectiveKeyForStorage(key: String): String {
         val selectedMethod = methodComboBox.selectedItem as? TranslationMethod
         if (selectedMethod == TranslationMethod.DIRECTIVE && detectedContext.found && detectedContext.scope != null) {
-            // When using directive with scope, the key in JSON is just the key
-            // The scope prefix is handled by the directive
             return key
         }
         return key
@@ -934,7 +1155,7 @@ class TranslocoCreateTranslationDialog(
             replaceSelectedTextWithTransloco(key)
         })
 
-        LOG.debug("TRANSLOCO-CREATE: Created translation key '$keyForStorage' and updated template with method $selectedMethod")
+        LOG.debug("TRANSLOCO-CREATE: Created translation key '$keyForStorage' with ${detectedParams.size} params")
         super.doOKAction()
     }
 
@@ -1003,7 +1224,7 @@ class TranslocoCreateTranslationDialog(
 
     private fun replaceSelectedTextWithTransloco(key: String) {
         val document = editor.document
-        val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document) ?: return
+        PsiDocumentManager.getInstance(project).getPsiFile(document) ?: return
 
         // Determine the replacement text based on selected method
         val replacement = generateTranslocoReplacement(key)
@@ -1015,17 +1236,36 @@ class TranslocoCreateTranslationDialog(
 
     /**
      * Generate the appropriate Transloco replacement text based on selected method.
+     * Includes params object if parameters were detected.
      */
     private fun generateTranslocoReplacement(key: String): String {
         val selectedMethod = methodComboBox.selectedItem as? TranslationMethod ?: TranslationMethod.PIPE
 
+        // Build params object if we have parameters
+        val paramsObject = if (detectedParams.isNotEmpty()) {
+            val params = detectedParams.joinToString(", ") { param ->
+                "${param.paramName}: ${param.originalExpression}"
+            }
+            "{ $params }"
+        } else {
+            null
+        }
+
         return when (selectedMethod) {
             TranslationMethod.PIPE -> {
-                "{{ '$key' | transloco }}"
+                if (paramsObject != null) {
+                    "{{ '$key' | transloco:$paramsObject }}"
+                } else {
+                    "{{ '$key' | transloco }}"
+                }
             }
             TranslationMethod.DIRECTIVE -> {
                 val varName = if (detectedContext.found) detectedContext.variableName else "t"
-                "{{ $varName('$key') }}"
+                if (paramsObject != null) {
+                    "{{ $varName('$key', $paramsObject) }}"
+                } else {
+                    "{{ $varName('$key') }}"
+                }
             }
         }
     }

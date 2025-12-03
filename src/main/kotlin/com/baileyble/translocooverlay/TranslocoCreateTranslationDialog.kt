@@ -6,6 +6,7 @@ import com.intellij.json.psi.JsonElementGenerator
 import com.intellij.json.psi.JsonFile
 import com.intellij.json.psi.JsonObject
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
@@ -541,8 +542,10 @@ class TranslocoCreateTranslationDialog(
             val locations = mutableListOf<TranslationLocation>()
             val processedPaths = mutableSetOf<String>()
 
-            // Find all translation files and group by directory
-            val allFiles = TranslationFileFinder.findAllTranslationFiles(project)
+            // Find all translation files and group by directory - must be in read action
+            val allFiles = ReadAction.compute<List<com.intellij.openapi.vfs.VirtualFile>, Throwable> {
+                TranslationFileFinder.findAllTranslationFiles(project)
+            }
             val byPath = allFiles.groupBy { it.parent?.path ?: "" }
 
             for ((path, files) in byPath) {

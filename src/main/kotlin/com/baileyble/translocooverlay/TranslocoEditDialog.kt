@@ -908,10 +908,9 @@ class TranslocoEditDialog(
             if (existing != null && existing.value is JsonObject) {
                 currentObject = existing.value as JsonObject
             } else if (existing == null) {
-                // Create new nested object
-                val generator = JsonElementGenerator(project)
-                val newProp = generator.createProperty(part, "{}")
-                val added = currentObject.addBefore(newProp, currentObject.lastChild) as? JsonProperty
+                // Create new nested object with proper comma handling
+                addPropertyToObject(currentObject, part, "{}")
+                val added = currentObject.findProperty(part)
                 currentObject = added?.value as? JsonObject ?: return
             } else {
                 LOG.warn("TRANSLOCO-EDIT: Cannot create nested key, path blocked at '$part'")
@@ -919,14 +918,50 @@ class TranslocoEditDialog(
             }
         }
 
-        // Add the final property
+        // Add the final property with proper comma handling
         val finalKey = keyParts.last()
-        val generator = JsonElementGenerator(project)
         val escapedValue = newValue.replace("\\", "\\\\").replace("\"", "\\\"")
-        val newProp = generator.createProperty(finalKey, "\"$escapedValue\"")
-
-        // Add before the closing brace
-        currentObject.addBefore(newProp, currentObject.lastChild)
+        addPropertyToObject(currentObject, finalKey, "\"$escapedValue\"")
         LOG.warn("TRANSLOCO-EDIT: Created '$keyPath' in ${file.name}")
+    }
+
+    /**
+     * Adds a property to a JSON object with proper comma handling.
+     */
+    private fun addPropertyToObject(jsonObject: JsonObject, key: String, value: String) {
+        val generator = JsonElementGenerator(project)
+        val propertyList = jsonObject.propertyList
+
+        if (propertyList.isEmpty()) {
+            // Object is empty, just add the property
+            val newProp = generator.createProperty(key, value)
+            jsonObject.addAfter(newProp, jsonObject.firstChild) // Add after opening brace
+        } else {
+            // Object has properties, need to add comma after last property
+            val lastProperty = propertyList.last()
+
+            // Check if there's already a comma after the last property
+            var nextSibling = lastProperty.nextSibling
+            var hasComma = false
+            while (nextSibling != null) {
+                val text = nextSibling.text.trim()
+                if (text == ",") {
+                    hasComma = true
+                    break
+                }
+                if (text == "}") break
+                nextSibling = nextSibling.nextSibling
+            }
+
+            // Add comma if needed
+            if (!hasComma) {
+                val comma = generator.createComma()
+                jsonObject.addAfter(comma, lastProperty)
+            }
+
+            // Add the new property before the closing brace
+            val newProp = generator.createProperty(key, value)
+            jsonObject.addBefore(newProp, jsonObject.lastChild)
+        }
     }
 }

@@ -177,6 +177,9 @@ class TranslocoCreateTranslationDialog(
     private lateinit var createPanel: JPanel
     private lateinit var cardLayout: CardLayout
 
+    // Key validation feedback
+    private lateinit var keyStatusLabel: JBLabel
+
     init {
         title = "Create Translation"
 
@@ -553,17 +556,30 @@ class TranslocoCreateTranslationDialog(
             gridx = 1
             weightx = 1.0
             fill = GridBagConstraints.HORIZONTAL
-            insets = JBUI.insets(0, 0, 8, 0)
+            insets = JBUI.insets(0, 0, 4, 0)
         }
         keyTextField = JBTextField()
         keyTextField.toolTipText = "Enter the translation key (e.g., 'user.profile.title')"
         keyTextField.emptyText.text = "e.g., user.profile.title"
         keyTextField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = updatePreview()
-            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = updatePreview()
-            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = updatePreview()
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = onKeyChanged()
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = onKeyChanged()
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = onKeyChanged()
         })
         panel.add(keyTextField, gbc)
+        row++
+
+        // Row 2.5: Key status label (shows if key already exists)
+        gbc.apply {
+            gridx = 1
+            gridy = row
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(0, 0, 8, 0)
+        }
+        keyStatusLabel = JBLabel(" ")
+        keyStatusLabel.font = keyStatusLabel.font.deriveFont(keyStatusLabel.font.size - 1f)
+        panel.add(keyStatusLabel, gbc)
         row++
 
         // Row 3: Translation Method selector
@@ -842,6 +858,59 @@ class TranslocoCreateTranslationDialog(
         val key = keyTextField.text.trim().ifBlank { "your.key.here" }
         val preview = generateTranslocoReplacement(key)
         previewLabel.text = preview
+    }
+
+    /**
+     * Called when the key text field changes - updates preview and validates key.
+     */
+    private fun onKeyChanged() {
+        updatePreview()
+        validateKeyExists()
+    }
+
+    /**
+     * Check if the key already exists and update the status label.
+     */
+    private fun validateKeyExists() {
+        val key = keyTextField.text.trim()
+
+        // Clear status if key is empty or invalid format
+        if (key.isBlank() || !key.matches(Regex("""^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$"""))) {
+            keyStatusLabel.text = " "
+            return
+        }
+
+        val location = selectedLocation
+        if (location == null) {
+            keyStatusLabel.text = " "
+            return
+        }
+
+        // Check if key exists in background thread
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val keyToCheck = getEffectiveKeyForStorage(key)
+            val englishFile = location.files["en"]
+
+            val exists = if (englishFile != null) {
+                ReadAction.compute<Boolean, Throwable> {
+                    val psiFile = PsiManager.getInstance(project).findFile(englishFile) as? JsonFile
+                    psiFile != null && JsonKeyNavigator.keyExists(psiFile, keyToCheck)
+                }
+            } else {
+                false
+            }
+
+            SwingUtilities.invokeLater {
+                if (exists) {
+                    keyStatusLabel.text = "Key '$keyToCheck' already exists - choose a different key or use Edit Translation"
+                    keyStatusLabel.foreground = JBColor(Color(180, 0, 0), Color(255, 100, 100))
+                    keyStatusLabel.icon = UIManager.getIcon("OptionPane.warningIcon")
+                } else {
+                    keyStatusLabel.text = " "
+                    keyStatusLabel.icon = null
+                }
+            }
+        }
     }
 
     private fun createContentPanel(): JComponent {
@@ -1309,6 +1378,11 @@ class TranslocoCreateTranslationDialog(
 
         updateLocationLabel()
         locationButton.isEnabled = availableLocations.size > 1
+
+        // Validate key now that location is set
+        if (::keyStatusLabel.isInitialized) {
+            validateKeyExists()
+        }
     }
 
     private fun updateLocationLabel() {
@@ -1417,6 +1491,7 @@ class TranslocoCreateTranslationDialog(
             dialog.getSelected()?.let {
                 selectedLocation = it
                 updateLocationLabel()
+                validateKeyExists()  // Re-validate key for new location
             }
         }
     }

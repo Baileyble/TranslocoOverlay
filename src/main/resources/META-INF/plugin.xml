@@ -9,22 +9,29 @@
 
         <h3>Features</h3>
         <ul>
-            <li>Hover over translation keys to see their values</li>
-            <li>Ctrl+Click to navigate to JSON translation files</li>
-            <li>Ctrl+Shift+Click to open translation editor dialog</li>
-            <li>Edit all language translations in one dialog</li>
+            <li><b>Hover</b> over translation keys to see their values across all languages</li>
+            <li><b>Ctrl+Click</b> on keys in HTML templates to navigate to JSON translation files</li>
+            <li><b>Ctrl+Shift+Click</b> on keys in HTML to open multi-language translation editor</li>
+            <li><b>Ctrl+Shift+Click</b> on keys in JSON files to find usages in templates</li>
+            <li>Edit all language translations in one convenient dialog</li>
             <li>Google Translate integration for auto-translation</li>
             <li>Create new translation keys that don't exist yet</li>
             <li>Autocomplete for translation keys</li>
+            <li>Support for Nx monorepo scoped translations</li>
         </ul>
 
         <h3>Supported Patterns</h3>
         <ul>
-            <li><code>{{ 'key' | transloco }}</code></li>
-            <li><code>[transloco]="'key'"</code></li>
-            <li><code>transloco="key"</code></li>
-            <li><code>t('key')</code> with <code>*transloco</code> directive</li>
+            <li><code>{{ 'key' | transloco }}</code> - Pipe syntax</li>
+            <li><code>[transloco]="'key'"</code> - Attribute binding</li>
+            <li><code>transloco="key"</code> - Direct attribute</li>
+            <li><code>t('key')</code> with <code>*transloco</code> directive - Structural directive</li>
         </ul>
+
+        <h3>Open Source</h3>
+        <p>This plugin was created with AI assistance (Claude). The source code is open source and available on
+        <a href="https://github.com/Baileyble/TranslocoOverlay">GitHub</a>. You are encouraged to review the code,
+        report issues, or create your own fork to customize it for your internationalization needs.</p>
     ]]></description>
 
     <!-- Platform and plugin dependencies -->

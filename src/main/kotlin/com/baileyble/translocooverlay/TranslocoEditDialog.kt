@@ -1,0 +1,960 @@
+package com.baileyble.translocooverlay
+
+import com.baileyble.translocooverlay.util.JsonKeyNavigator
+import com.baileyble.translocooverlay.util.TranslationFileFinder
+import com.intellij.json.psi.JsonElementGenerator
+import com.intellij.json.psi.JsonFile
+import com.intellij.json.psi.JsonObject
+import com.intellij.json.psi.JsonProperty
+import com.intellij.json.psi.JsonStringLiteral
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.PsiManager
+import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
+import com.intellij.ui.components.JBTextField
+import com.intellij.util.ui.JBUI
+import java.awt.*
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.util.prefs.Preferences
+import javax.swing.*
+
+/**
+ * Dialog for editing Transloco translations across all languages.
+ * Features:
+ * - Tabbed interface showing only locations where key exists
+ * - "+" tab to add key to new file locations
+ * - Remembers last used file location
+ * - Google Translate integration for auto-translation
+ */
+class TranslocoEditDialog(
+    private val project: Project,
+    private val translationKey: String,
+    private val existingLocations: MutableList<TranslationLocation>,
+    private val availableLocations: MutableList<TranslationLocation>
+) : DialogWrapper(project, true) {
+
+    companion object {
+        private val LOG = Logger.getInstance(TranslocoEditDialog::class.java)
+        private val PREFS = Preferences.userNodeForPackage(TranslocoEditDialog::class.java)
+        private const val LAST_LOCATION_KEY = "lastTranslationLocation"
+
+        // Common languages to show
+        private val COMMON_LANGUAGES = listOf("en", "es", "fr", "de", "it", "pt", "zh", "ja", "ko", "ru")
+
+        // Language display names
+        private val LANGUAGE_NAMES = mapOf(
+            "en" to "English",
+            "es" to "Spanish",
+            "fr" to "French",
+            "de" to "German",
+            "it" to "Italian",
+            "pt" to "Portuguese",
+            "zh" to "Chinese",
+            "ja" to "Japanese",
+            "ko" to "Korean",
+            "ru" to "Russian",
+            "ar" to "Arabic",
+            "hi" to "Hindi",
+            "nl" to "Dutch",
+            "pl" to "Polish",
+            "tr" to "Turkish",
+            "vi" to "Vietnamese"
+        )
+
+        fun getLastUsedLocation(): String? = PREFS.get(LAST_LOCATION_KEY, null)
+        fun setLastUsedLocation(path: String) = PREFS.put(LAST_LOCATION_KEY, path)
+    }
+
+    /**
+     * Represents a translation file location with all its language files.
+     */
+    data class TranslationLocation(
+        val displayPath: String,           // Shortened path for tab display
+        val fullPath: String,              // Full path for tooltip
+        val keyInFile: String,             // The key path within JSON files
+        val translations: MutableMap<String, TranslationEntry>,
+        val isNewKey: Boolean
+    )
+
+    data class TranslationEntry(
+        var value: String,
+        val file: VirtualFile?,
+        val exists: Boolean
+    )
+
+    // Text fields per location index and language
+    private val locationTextFields = mutableMapOf<Int, MutableMap<String, JBTextField>>()
+    private lateinit var tabbedPane: JBTabbedPane
+    private lateinit var mainPanel: JPanel
+    private var contentPanel: JComponent? = null
+
+    init {
+        title = if (existingLocations.isEmpty()) "Create Translation: $translationKey" else "Edit Translation: $translationKey"
+        init()
+
+        // If no existing locations, auto-select last used or prompt to select one
+        if (existingLocations.isEmpty() && availableLocations.isNotEmpty()) {
+            val lastUsed = getLastUsedLocation()
+            val lastUsedLocation = availableLocations.find { it.fullPath == lastUsed }
+
+            if (lastUsedLocation != null) {
+                // Auto-select the last used location
+                SwingUtilities.invokeLater {
+                    addLocation(lastUsedLocation)
+                }
+            } else {
+                // Show selector
+                SwingUtilities.invokeLater {
+                    showLocationSelector(null)
+                }
+            }
+        }
+    }
+
+    override fun createCenterPanel(): JComponent {
+        mainPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
+        mainPanel.preferredSize = Dimension(JBUI.scale(700), JBUI.scale(500))
+        mainPanel.border = JBUI.Borders.empty(8)
+
+        // Header with key info
+        val headerPanel = createHeaderPanel()
+        mainPanel.add(headerPanel, BorderLayout.NORTH)
+
+        // Content
+        rebuildContent()
+
+        return mainPanel
+    }
+
+    private fun rebuildContent() {
+        contentPanel?.let {
+            if (::mainPanel.isInitialized) {
+                mainPanel.remove(it)
+            }
+        }
+
+        contentPanel = when {
+            existingLocations.size > 1 || (existingLocations.size == 1 && availableLocations.isNotEmpty()) -> {
+                createTabbedContent()
+            }
+            existingLocations.size == 1 -> {
+                createSingleLocationPanel(0, existingLocations[0])
+            }
+            else -> {
+                // No locations yet - show placeholder
+                JPanel(BorderLayout()).apply {
+                    val label = JBLabel("Select a location to add this translation key")
+                    label.horizontalAlignment = SwingConstants.CENTER
+                    add(label, BorderLayout.CENTER)
+
+                    if (availableLocations.isNotEmpty()) {
+                        val selectButton = JButton("Select Location...")
+                        selectButton.addActionListener { showLocationSelector(null) }
+                        val buttonPanel = JPanel(FlowLayout(FlowLayout.CENTER))
+                        buttonPanel.add(selectButton)
+                        add(buttonPanel, BorderLayout.SOUTH)
+                    }
+                }
+            }
+        }
+
+        contentPanel?.let { panel ->
+            if (::mainPanel.isInitialized) {
+                mainPanel.add(panel, BorderLayout.CENTER)
+                mainPanel.revalidate()
+                mainPanel.repaint()
+            }
+        }
+    }
+
+    private fun createHeaderPanel(): JPanel {
+        val headerPanel = JPanel(GridBagLayout())
+        headerPanel.border = JBUI.Borders.emptyBottom(12)
+        val gbc = GridBagConstraints().apply {
+            gridx = 0
+            gridy = 0
+            anchor = GridBagConstraints.WEST
+            fill = GridBagConstraints.HORIZONTAL
+            weightx = 1.0
+        }
+
+        // Key label with monospace font
+        val keyPrefix = JBLabel("Key: ")
+        keyPrefix.font = keyPrefix.font.deriveFont(Font.BOLD)
+
+        val keyValue = JBLabel(translationKey)
+        keyValue.font = Font(Font.MONOSPACED, Font.PLAIN, keyValue.font.size)
+        keyValue.foreground = JBColor(Color(0, 102, 153), Color(102, 178, 255))
+
+        val keyPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
+        keyPanel.add(keyPrefix)
+        keyPanel.add(keyValue)
+        headerPanel.add(keyPanel, gbc)
+
+        return headerPanel
+    }
+
+    private fun createTabbedContent(): JComponent {
+        tabbedPane = JBTabbedPane()
+
+        existingLocations.forEachIndexed { index, location ->
+            val panel = createSingleLocationPanel(index, location)
+            tabbedPane.addTab(location.displayPath, panel)
+            tabbedPane.setToolTipTextAt(index, location.fullPath)
+
+            // Add custom tab component with close button (only if key exists in the file)
+            if (!location.isNewKey) {
+                val tabComponent = createTabComponentWithClose(location.displayPath, index, location)
+                tabbedPane.setTabComponentAt(index, tabComponent)
+            }
+        }
+
+        // Add "+" tab for adding new locations
+        if (availableLocations.isNotEmpty()) {
+            val plusPanel = JPanel()
+            tabbedPane.addTab("+", plusPanel)
+            val plusIndex = tabbedPane.tabCount - 1
+            tabbedPane.setToolTipTextAt(plusIndex, "Add to another location...")
+
+            // Handle click on "+" tab
+            tabbedPane.addChangeListener {
+                if (::tabbedPane.isInitialized && tabbedPane.selectedIndex == plusIndex) {
+                    // Revert to previous tab immediately
+                    val prevTab = if (plusIndex > 0) plusIndex - 1 else 0
+                    SwingUtilities.invokeLater {
+                        if (existingLocations.isNotEmpty() && ::tabbedPane.isInitialized) {
+                            tabbedPane.selectedIndex = prevTab
+                        }
+                        showLocationSelector(tabbedPane)
+                    }
+                }
+            }
+        }
+
+        return tabbedPane
+    }
+
+    /**
+     * Creates a tab component with title and close button.
+     */
+    private fun createTabComponentWithClose(title: String, tabIndex: Int, location: TranslationLocation): JComponent {
+        val tabPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
+        tabPanel.isOpaque = false
+
+        // Title label
+        val titleLabel = JBLabel(title)
+        titleLabel.border = JBUI.Borders.emptyRight(8)
+        tabPanel.add(titleLabel)
+
+        // Close button
+        val closeButton = JButton("×")
+        closeButton.preferredSize = Dimension(JBUI.scale(18), JBUI.scale(18))
+        closeButton.margin = JBUI.emptyInsets()
+        closeButton.isFocusable = false
+        closeButton.isContentAreaFilled = false
+        closeButton.isBorderPainted = false
+        closeButton.font = closeButton.font.deriveFont(Font.BOLD, 14f)
+        closeButton.foreground = JBColor.GRAY
+        closeButton.toolTipText = "Delete translation from this location"
+
+        // Hover effect
+        closeButton.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseEntered(e: java.awt.event.MouseEvent) {
+                closeButton.foreground = JBColor.RED
+            }
+            override fun mouseExited(e: java.awt.event.MouseEvent) {
+                closeButton.foreground = JBColor.GRAY
+            }
+        })
+
+        // Click handler with confirmation
+        closeButton.addActionListener {
+            confirmAndDeleteTranslation(location)
+        }
+
+        tabPanel.add(closeButton)
+        return tabPanel
+    }
+
+    /**
+     * Shows confirmation dialog and deletes translation if confirmed.
+     */
+    private fun confirmAndDeleteTranslation(location: TranslationLocation) {
+        val result = Messages.showYesNoDialog(
+            project,
+            "Are you sure you want to delete the translation key '${location.keyInFile}' from:\n\n${location.fullPath}\n\nThis action cannot be undone.",
+            "Delete Translation",
+            "Delete",
+            "Cancel",
+            Messages.getWarningIcon()
+        )
+
+        if (result == Messages.YES) {
+            deleteTranslationFromLocation(location)
+        }
+    }
+
+    /**
+     * Deletes the translation key from all language files in the location.
+     */
+    private fun deleteTranslationFromLocation(location: TranslationLocation) {
+        WriteCommandAction.runWriteCommandAction(project, "Delete Translation", null, {
+            for ((_, entry) in location.translations) {
+                if (entry.exists && entry.file != null) {
+                    deleteTranslationFromFile(entry.file, location.keyInFile)
+                }
+            }
+        })
+
+        // Remove from existing locations and move to available
+        existingLocations.remove(location)
+
+        // Create a new "available" location (with isNewKey = true)
+        val availableLocation = location.copy(
+            isNewKey = true,
+            translations = location.translations.mapValues {
+                TranslationEntry("", it.value.file, false)
+            }.toMutableMap()
+        )
+
+        // Add to available if not already there
+        if (availableLocations.none { it.fullPath == location.fullPath }) {
+            availableLocations.add(availableLocation)
+        }
+
+        // Rebuild UI
+        locationTextFields.clear()
+        rebuildContent()
+
+        // Show confirmation
+        Messages.showInfoMessage(
+            project,
+            "Translation deleted successfully from ${location.displayPath}",
+            "Translation Deleted"
+        )
+    }
+
+    /**
+     * Deletes a translation key from a JSON file.
+     */
+    private fun deleteTranslationFromFile(file: VirtualFile, keyPath: String) {
+        val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: return
+        val navResult = JsonKeyNavigator.navigateToKey(psiFile, keyPath)
+
+        if (navResult.found && navResult.property != null) {
+            // Delete the property
+            navResult.property.delete()
+            LOG.debug("TRANSLOCO-EDIT: Deleted '$keyPath' from ${file.name}")
+
+            // Clean up empty parent objects
+            cleanupEmptyParents(psiFile, keyPath)
+        }
+    }
+
+    /**
+     * Removes empty parent objects after deleting a key.
+     */
+    private fun cleanupEmptyParents(psiFile: JsonFile, keyPath: String) {
+        val parts = keyPath.split(".")
+        if (parts.size <= 1) return
+
+        // Check each parent level from innermost to outermost
+        for (i in parts.size - 2 downTo 0) {
+            val parentPath = parts.take(i + 1).joinToString(".")
+            val parentResult = JsonKeyNavigator.navigateToKey(psiFile, parentPath)
+
+            if (parentResult.found && parentResult.value is JsonObject) {
+                val parentObj = parentResult.value as JsonObject
+                // If the object is empty (only has braces), delete it
+                if (parentObj.propertyList.isEmpty() && parentResult.property != null) {
+                    parentResult.property.delete()
+                    LOG.debug("TRANSLOCO-EDIT: Cleaned up empty parent '$parentPath' from ${psiFile.name}")
+                } else {
+                    // Parent is not empty, stop cleaning
+                    break
+                }
+            }
+        }
+    }
+
+    private fun showLocationSelector(relativeTo: JComponent?) {
+        if (availableLocations.isEmpty()) return
+
+        val lastUsed = getLastUsedLocation()
+
+        // Sort with last used location first
+        val sortedLocations = availableLocations.sortedWith(compareBy(
+            { it.fullPath != lastUsed },
+            { it.displayPath }
+        ))
+
+        // Create a proper selection dialog
+        val dialog = object : DialogWrapper(project, true) {
+            private var selectedLocation: TranslationLocation? = null
+            private lateinit var locationList: JBList<TranslationLocation>
+
+            init {
+                title = "Select Translation Location"
+                init()
+            }
+
+            override fun createCenterPanel(): JComponent {
+                val panel = JPanel(BorderLayout(0, JBUI.scale(8)))
+                panel.preferredSize = Dimension(JBUI.scale(500), JBUI.scale(300))
+                panel.border = JBUI.Borders.empty(8)
+
+                // Info label
+                val infoLabel = JBLabel("Select where to add this translation key:")
+                infoLabel.border = JBUI.Borders.emptyBottom(8)
+                panel.add(infoLabel, BorderLayout.NORTH)
+
+                // Location list with custom renderer
+                val listModel = DefaultListModel<TranslationLocation>()
+                sortedLocations.forEach { listModel.addElement(it) }
+
+                locationList = JBList(listModel)
+                locationList.cellRenderer = LocationListCellRenderer(lastUsed)
+                locationList.selectionMode = ListSelectionModel.SINGLE_SELECTION
+
+                // Pre-select last used or first item
+                val lastUsedIndex = sortedLocations.indexOfFirst { it.fullPath == lastUsed }
+                if (lastUsedIndex >= 0) {
+                    locationList.selectedIndex = lastUsedIndex
+                } else if (sortedLocations.isNotEmpty()) {
+                    locationList.selectedIndex = 0
+                }
+
+                // Double-click to select
+                locationList.addMouseListener(object : java.awt.event.MouseAdapter() {
+                    override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                        if (e.clickCount == 2) {
+                            doOKAction()
+                        }
+                    }
+                })
+
+                val scrollPane = JBScrollPane(locationList)
+                scrollPane.border = JBUI.Borders.customLine(JBColor.border(), 1)
+                panel.add(scrollPane, BorderLayout.CENTER)
+
+                return panel
+            }
+
+            override fun doOKAction() {
+                selectedLocation = locationList.selectedValue
+                super.doOKAction()
+            }
+
+            fun getSelected(): TranslationLocation? = selectedLocation
+        }
+
+        if (dialog.showAndGet()) {
+            dialog.getSelected()?.let { addLocation(it) }
+        }
+    }
+
+    /**
+     * Custom cell renderer for the location list with better formatting.
+     */
+    private class LocationListCellRenderer(private val lastUsed: String?) : ListCellRenderer<TranslationLocation> {
+        override fun getListCellRendererComponent(
+            list: JList<out TranslationLocation>?,
+            value: TranslationLocation?,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean
+        ): Component {
+            val panel = JPanel(BorderLayout(JBUI.scale(8), 0))
+            panel.border = JBUI.Borders.empty(6, 8)
+
+            if (isSelected) {
+                panel.background = UIManager.getColor("List.selectionBackground")
+            } else {
+                panel.background = if (index % 2 == 0) {
+                    UIManager.getColor("List.background")
+                } else {
+                    JBColor(Color(245, 245, 245), Color(50, 50, 50))
+                }
+            }
+
+            if (value != null) {
+                val leftPanel = JPanel(BorderLayout())
+                leftPanel.isOpaque = false
+
+                // Display name (bold if last used)
+                val nameLabel = JBLabel(value.displayPath)
+                if (value.fullPath == lastUsed) {
+                    nameLabel.font = nameLabel.font.deriveFont(Font.BOLD)
+                }
+                if (isSelected) {
+                    nameLabel.foreground = UIManager.getColor("List.selectionForeground")
+                }
+                leftPanel.add(nameLabel, BorderLayout.NORTH)
+
+                // Full path (smaller, gray)
+                val pathLabel = JBLabel(value.fullPath)
+                pathLabel.font = pathLabel.font.deriveFont(pathLabel.font.size - 2f)
+                pathLabel.foreground = if (isSelected) {
+                    UIManager.getColor("List.selectionForeground")
+                } else {
+                    JBColor.GRAY
+                }
+                leftPanel.add(pathLabel, BorderLayout.SOUTH)
+
+                panel.add(leftPanel, BorderLayout.CENTER)
+
+                // "Last used" badge
+                if (value.fullPath == lastUsed) {
+                    val badge = JBLabel("last used")
+                    badge.font = badge.font.deriveFont(Font.ITALIC, badge.font.size - 2f)
+                    badge.foreground = JBColor(Color(70, 130, 180), Color(100, 160, 210))
+                    badge.border = JBUI.Borders.empty(0, 8)
+                    panel.add(badge, BorderLayout.EAST)
+                }
+            }
+
+            return panel
+        }
+    }
+
+    private fun addLocation(location: TranslationLocation) {
+        // Remember this location
+        setLastUsedLocation(location.fullPath)
+
+        // Add to existing locations
+        existingLocations.add(location)
+
+        // Rebuild the UI
+        locationTextFields.clear()
+        rebuildContent()
+
+        // Select the new tab
+        tabbedPane?.let {
+            val newIndex = existingLocations.size - 1
+            if (newIndex < it.tabCount) {
+                it.selectedIndex = newIndex
+            }
+        }
+    }
+
+    private fun createSingleLocationPanel(locationIndex: Int, location: TranslationLocation): JComponent {
+        val translations = location.translations
+        locationTextFields[locationIndex] = mutableMapOf()
+        val textFields = locationTextFields[locationIndex]!!
+
+        val translationsPanel = JPanel(GridBagLayout())
+        translationsPanel.border = JBUI.Borders.empty(12)
+        val rowGbc = GridBagConstraints()
+        var row = 0
+
+        // Compact header info panel
+        rowGbc.apply {
+            gridx = 0
+            gridy = row++
+            gridwidth = 3
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(0, 0, 12, 0)
+            weightx = 1.0
+        }
+
+        val headerPanel = JPanel(GridBagLayout())
+        headerPanel.background = JBColor(Color(245, 245, 250), Color(45, 45, 50))
+        headerPanel.border = JBUI.Borders.empty(8, 10)
+
+        val headerGbc = GridBagConstraints().apply {
+            gridx = 0
+            gridy = 0
+            anchor = GridBagConstraints.WEST
+            fill = GridBagConstraints.HORIZONTAL
+            weightx = 1.0
+        }
+
+        val pathLabel = JBLabel("<html><font color='gray'>Path:</font> ${location.fullPath}</html>")
+        pathLabel.font = pathLabel.font.deriveFont(pathLabel.font.size - 1f)
+        headerPanel.add(pathLabel, headerGbc)
+
+        if (location.keyInFile != translationKey) {
+            headerGbc.gridy = 1
+            headerGbc.insets = JBUI.insetsTop(2)
+            val keyLabel = JBLabel("<html><font color='gray'>Key in file:</font> ${location.keyInFile}</html>")
+            keyLabel.font = keyLabel.font.deriveFont(keyLabel.font.size - 1f)
+            headerPanel.add(keyLabel, headerGbc)
+        }
+
+        if (location.isNewKey) {
+            headerGbc.gridy = if (location.keyInFile != translationKey) 2 else 1
+            headerGbc.insets = JBUI.insetsTop(4)
+            val newLabel = JBLabel("New key - fill in values to create")
+            newLabel.foreground = JBColor(Color(80, 140, 80), Color(120, 180, 120))
+            newLabel.font = newLabel.font.deriveFont(Font.ITALIC, newLabel.font.size - 1f)
+            headerPanel.add(newLabel, headerGbc)
+        }
+
+        translationsPanel.add(headerPanel, rowGbc)
+
+        // English row with prominent styling
+        rowGbc.apply {
+            gridy = row++
+            insets = JBUI.insets(0, 0, 12, 0)
+        }
+        addLanguageRow(translationsPanel, "en", true, rowGbc, row - 1, translations, textFields, location)
+
+        // Add other languages
+        val otherLangs = translations.keys.filter { it != "en" }.sorted()
+        for (lang in otherLangs) {
+            addLanguageRow(translationsPanel, lang, false, rowGbc, row++, translations, textFields, location)
+        }
+
+        // Add any common languages not already present (only if files exist for this location)
+        for (lang in COMMON_LANGUAGES) {
+            if (lang != "en" && !translations.containsKey(lang)) {
+                // Try to find a file for this language in the same directory
+                val langFile = findLanguageFileInLocation(location, lang)
+                if (langFile != null) {
+                    translations[lang] = TranslationEntry("", langFile, false)
+                    addLanguageRow(translationsPanel, lang, false, rowGbc, row++, translations, textFields, location)
+                }
+            }
+        }
+
+        // Translate All button at the bottom
+        rowGbc.apply {
+            gridy = row++
+            gridwidth = 3
+            insets = JBUI.insets(16, 0, 0, 0)
+            anchor = GridBagConstraints.EAST
+            fill = GridBagConstraints.NONE
+        }
+        val translateAllButton = JButton("Translate All from English")
+        translateAllButton.toolTipText = "Auto-translate empty fields using Google Translate"
+        translateAllButton.addActionListener { translateAllFromEnglish(textFields, translations) }
+        translationsPanel.add(translateAllButton, rowGbc)
+
+        // Add vertical glue at the end
+        rowGbc.apply {
+            gridy = row
+            weighty = 1.0
+            fill = GridBagConstraints.BOTH
+        }
+        translationsPanel.add(Box.createVerticalGlue(), rowGbc)
+
+        val scrollPane = JBScrollPane(translationsPanel)
+        scrollPane.border = JBUI.Borders.customLine(JBColor.border(), 1)
+        scrollPane.verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+        scrollPane.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+
+        return scrollPane
+    }
+
+    private fun findLanguageFileInLocation(location: TranslationLocation, lang: String): VirtualFile? {
+        // Get an existing file from this location to find the directory
+        val existingFile = location.translations.values.firstOrNull()?.file ?: return null
+        val directory = existingFile.parent ?: return null
+
+        // Look for the language file in the same directory
+        return directory.findChild("$lang.json")
+    }
+
+    private fun addLanguageRow(
+        panel: JPanel,
+        lang: String,
+        isSource: Boolean,
+        gbc: GridBagConstraints,
+        row: Int,
+        translations: MutableMap<String, TranslationEntry>,
+        textFields: MutableMap<String, JBTextField>,
+        location: TranslationLocation
+    ) {
+        val entry = translations[lang]
+        val langName = LANGUAGE_NAMES[lang] ?: lang.uppercase()
+
+        // Column 0: Language label - clean and simple
+        gbc.apply {
+            gridx = 0
+            gridy = row
+            gridwidth = 1
+            weightx = 0.0
+            weighty = 0.0
+            fill = GridBagConstraints.NONE
+            anchor = GridBagConstraints.WEST
+            insets = JBUI.insets(4, 0, 4, 12)
+        }
+
+        val label = JBLabel("$langName ($lang)")
+        label.preferredSize = Dimension(JBUI.scale(120), JBUI.scale(26))
+        if (isSource) {
+            label.font = label.font.deriveFont(Font.BOLD)
+        }
+        panel.add(label, gbc)
+
+        // Column 1: Text field
+        gbc.apply {
+            gridx = 1
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(4, 0, 4, 8)
+        }
+        val textField = JBTextField(entry?.value ?: "")
+        textField.preferredSize = Dimension(JBUI.scale(400), JBUI.scale(30))
+        if (isSource) {
+            textField.toolTipText = "Source text (English)"
+        }
+        textFields[lang] = textField
+        panel.add(textField, gbc)
+
+        // Column 2: Translate button (for non-English)
+        gbc.apply {
+            gridx = 2
+            weightx = 0.0
+            fill = GridBagConstraints.NONE
+            insets = JBUI.insets(4, 0, 4, 0)
+        }
+
+        if (!isSource) {
+            val translateBtn = JButton("Translate")
+            translateBtn.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(28))
+            translateBtn.toolTipText = "Translate from English"
+            translateBtn.addActionListener { translateSingleLanguage(lang, textFields) }
+            panel.add(translateBtn, gbc)
+        } else {
+            // Placeholder for alignment
+            panel.add(Box.createHorizontalStrut(JBUI.scale(90)), gbc)
+        }
+    }
+
+    private fun translateSingleLanguage(targetLang: String, textFields: MutableMap<String, JBTextField>) {
+        val englishText = textFields["en"]?.text ?: return
+        if (englishText.isBlank()) {
+            Messages.showWarningDialog(project, "Please enter English text first.", "No Source Text")
+            return
+        }
+
+        translateWithGoogle(englishText, targetLang) { translatedText ->
+            SwingUtilities.invokeLater {
+                textFields[targetLang]?.text = translatedText
+            }
+        }
+    }
+
+    private fun translateAllFromEnglish(
+        textFields: MutableMap<String, JBTextField>,
+        translations: MutableMap<String, TranslationEntry>
+    ) {
+        val englishText = textFields["en"]?.text ?: return
+        if (englishText.isBlank()) {
+            Messages.showWarningDialog(project, "Please enter English text first.", "No Source Text")
+            return
+        }
+
+        for ((lang, textField) in textFields) {
+            if (lang != "en" && (textField.text.isBlank() || textField.text == translations[lang]?.value)) {
+                translateWithGoogle(englishText, lang) { translatedText ->
+                    SwingUtilities.invokeLater {
+                        textField.text = translatedText
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Translate text using Google Translate (free API).
+     */
+    private fun translateWithGoogle(text: String, targetLang: String, callback: (String) -> Unit) {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val encodedText = URLEncoder.encode(text, "UTF-8")
+                val url = URL("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=$targetLang&dt=t&q=$encodedText")
+
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+
+                val response = BufferedReader(InputStreamReader(connection.inputStream)).use { it.readText() }
+
+                // Parse the response - it's a nested JSON array
+                val translated = parseGoogleTranslateResponse(response)
+                callback(translated ?: text)
+
+            } catch (e: Exception) {
+                LOG.debug("TRANSLOCO-TRANSLATE: Failed to translate to $targetLang: ${e.message}")
+                callback(text) // Return original text on failure
+            }
+        }
+    }
+
+    private fun parseGoogleTranslateResponse(response: String): String? {
+        try {
+            val result = StringBuilder()
+            var i = 0
+            var depth = 0
+            var inString = false
+            var escape = false
+            var currentString = StringBuilder()
+            var foundFirst = false
+
+            while (i < response.length) {
+                val c = response[i]
+
+                if (escape) {
+                    if (inString) currentString.append(c)
+                    escape = false
+                } else when (c) {
+                    '\\' -> {
+                        escape = true
+                        if (inString) currentString.append(c)
+                    }
+                    '"' -> {
+                        if (inString) {
+                            if (depth == 3 && !foundFirst) {
+                                result.append(currentString)
+                                foundFirst = true
+                            }
+                            currentString = StringBuilder()
+                        }
+                        inString = !inString
+                    }
+                    '[' -> if (!inString) depth++
+                    ']' -> if (!inString) depth--
+                    else -> if (inString) currentString.append(c)
+                }
+                i++
+            }
+
+            return if (result.isNotEmpty()) result.toString() else null
+        } catch (e: Exception) {
+            LOG.debug("TRANSLOCO-TRANSLATE: Failed to parse response: ${e.message}")
+            return null
+        }
+    }
+
+    override fun doOKAction() {
+        // Save translations for all locations
+        WriteCommandAction.runWriteCommandAction(project, "Update Translations", null, {
+            existingLocations.forEachIndexed { index, location ->
+                val textFields = locationTextFields[index] ?: return@forEachIndexed
+
+                // Remember this location as last used
+                setLastUsedLocation(location.fullPath)
+
+                for ((lang, textField) in textFields) {
+                    val newValue = textField.text
+                    val entry = location.translations[lang] ?: continue
+                    val file = entry.file ?: continue
+
+                    if (newValue.isBlank()) continue
+
+                    // Only update if value changed or it's a new key
+                    if (newValue != entry.value || !entry.exists) {
+                        if (entry.exists) {
+                            updateTranslation(file, location.keyInFile, newValue)
+                        } else {
+                            createTranslation(file, location.keyInFile, newValue)
+                        }
+                    }
+                }
+            }
+        })
+
+        super.doOKAction()
+    }
+
+    private fun updateTranslation(file: VirtualFile, keyPath: String, newValue: String) {
+        val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: return
+        val navResult = JsonKeyNavigator.navigateToKey(psiFile, keyPath)
+
+        if (navResult.found && navResult.value is JsonStringLiteral) {
+            val generator = JsonElementGenerator(project)
+            val newLiteral = generator.createStringLiteral(newValue)
+            navResult.value.replace(newLiteral)
+            LOG.debug("TRANSLOCO-EDIT: Updated '$keyPath' in ${file.name}")
+        }
+    }
+
+    private fun createTranslation(file: VirtualFile, keyPath: String, newValue: String) {
+        val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: return
+        val rootObject = psiFile.topLevelValue as? JsonObject ?: return
+
+        val keyParts = keyPath.split(".")
+        var currentObject = rootObject
+
+        // Navigate/create nested objects
+        for (i in 0 until keyParts.size - 1) {
+            val part = keyParts[i]
+            val existing = currentObject.findProperty(part)
+
+            if (existing != null && existing.value is JsonObject) {
+                currentObject = existing.value as JsonObject
+            } else if (existing == null) {
+                // Create new nested object with proper comma handling
+                addPropertyToObject(currentObject, part, "{}")
+                val added = currentObject.findProperty(part)
+                currentObject = added?.value as? JsonObject ?: return
+            } else {
+                LOG.debug("TRANSLOCO-EDIT: Cannot create nested key, path blocked at '$part'")
+                return
+            }
+        }
+
+        // Add the final property with proper comma handling
+        val finalKey = keyParts.last()
+        val escapedValue = newValue.replace("\\", "\\\\").replace("\"", "\\\"")
+        addPropertyToObject(currentObject, finalKey, "\"$escapedValue\"")
+        LOG.debug("TRANSLOCO-EDIT: Created '$keyPath' in ${file.name}")
+    }
+
+    /**
+     * Adds a property to a JSON object with proper comma handling.
+     */
+    private fun addPropertyToObject(jsonObject: JsonObject, key: String, value: String) {
+        val generator = JsonElementGenerator(project)
+        val propertyList = jsonObject.propertyList
+
+        if (propertyList.isEmpty()) {
+            // Object is empty, just add the property
+            val newProp = generator.createProperty(key, value)
+            jsonObject.addAfter(newProp, jsonObject.firstChild) // Add after opening brace
+        } else {
+            // Object has properties, need to add comma after last property
+            val lastProperty = propertyList.last()
+
+            // Check if there's already a comma after the last property
+            var nextSibling = lastProperty.nextSibling
+            var hasComma = false
+            while (nextSibling != null) {
+                val text = nextSibling.text.trim()
+                if (text == ",") {
+                    hasComma = true
+                    break
+                }
+                if (text == "}") break
+                nextSibling = nextSibling.nextSibling
+            }
+
+            // Add comma if needed
+            if (!hasComma) {
+                val comma = generator.createComma()
+                jsonObject.addAfter(comma, lastProperty)
+            }
+
+            // Add the new property before the closing brace
+            val newProp = generator.createProperty(key, value)
+            jsonObject.addBefore(newProp, jsonObject.lastChild)
+        }
+    }
+}

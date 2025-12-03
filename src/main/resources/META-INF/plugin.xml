@@ -1,29 +1,64 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
     <id>com.baileyble.TranslocoOverlay</id>
+    <name>Transloco Overlay</name>
+    <vendor url="https://github.com/Baileyble">Baileyble</vendor>
 
-    <!-- Public plugin name should be written in Title Case.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
-    <name>TranslocoOverlay</name>
-
-    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor url="https://www.yourcompany.com">YourCompany</vendor>
-
-    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
     <description><![CDATA[
-        Enter short description for your plugin here.<br>
-        <em>most HTML tags may be used</em>
+        <p>Provides hover-to-view and inline editing for Transloco translation keys in Angular templates.</p>
+
+        <h3>Features</h3>
+        <ul>
+            <li><b>Hover</b> over translation keys to see their values across all languages</li>
+            <li><b>Ctrl+Click</b> on keys in HTML templates to navigate to JSON translation files</li>
+            <li><b>Ctrl+Shift+Click</b> on keys in HTML to open multi-language translation editor</li>
+            <li><b>Ctrl+Shift+Click</b> on keys in JSON files to find usages in templates</li>
+            <li>Edit all language translations in one convenient dialog</li>
+            <li>Google Translate integration for auto-translation</li>
+            <li>Create new translation keys that don't exist yet</li>
+            <li>Autocomplete for translation keys</li>
+            <li>Support for Nx monorepo scoped translations</li>
+        </ul>
+
+        <h3>Supported Patterns</h3>
+        <ul>
+            <li><code>{{ 'key' | transloco }}</code> - Pipe syntax</li>
+            <li><code>[transloco]="'key'"</code> - Attribute binding</li>
+            <li><code>transloco="key"</code> - Direct attribute</li>
+            <li><code>t('key')</code> with <code>*transloco</code> directive - Structural directive</li>
+        </ul>
+
+        <h3>Open Source & AI Transparency</h3>
+        <p>This plugin was entirely created using AI (Claude by Anthropic). If you are skeptical of AI-generated code quality,
+        the source code is fully open source and available on <a href="https://github.com/Baileyble/TranslocoOverlay">GitHub</a>
+        for your review before installation. You are encouraged to inspect the code, report issues, or create your own fork
+        to customize it for your internationalization needs.</p>
     ]]></description>
 
-    <!-- Product and plugin compatibility requirements.
-         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <!-- Platform and plugin dependencies -->
     <depends>com.intellij.modules.platform</depends>
+    <depends>JavaScript</depends>
 
-    <!-- Extension points defined by the plugin.
-         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
+        <!-- Goto declaration handler for Ctrl+Click navigation -->
+        <gotoDeclarationHandler
+                implementation="com.baileyble.translocooverlay.TranslocoGotoDeclarationHandler"
+                order="first"/>
 
+        <!-- Reference contributor for references -->
+        <psi.referenceContributor
+                implementation="com.baileyble.translocooverlay.TranslocoReferenceContributor"/>
+
+        <!-- Documentation provider for hover tooltips -->
+        <documentationProvider implementation="com.baileyble.translocooverlay.TranslocoDocumentationProvider"/>
+
+        <!-- Completion contributor for autocomplete -->
+        <completion.contributor
+                language="any"
+                implementationClass="com.baileyble.translocooverlay.TranslocoCompletionContributor"/>
+
+        <!-- Editor factory listener for Ctrl+Shift+Click editing -->
+        <editorFactoryListener
+                implementation="com.baileyble.translocooverlay.TranslocoEditorFactoryListener"/>
     </extensions>
 </idea-plugin>

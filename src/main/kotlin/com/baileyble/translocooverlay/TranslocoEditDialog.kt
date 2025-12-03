@@ -26,7 +26,7 @@ import java.awt.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import java.net.URLEncoder
 import java.util.prefs.Preferences
 import javax.swing.*
@@ -777,7 +777,7 @@ class TranslocoEditDialog(
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
                 val encodedText = URLEncoder.encode(text, "UTF-8")
-                val url = URL("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=$targetLang&dt=t&q=$encodedText")
+                val url = URI("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=$targetLang&dt=t&q=$encodedText").toURL()
 
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"

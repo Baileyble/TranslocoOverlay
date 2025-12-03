@@ -548,68 +548,72 @@ class TranslocoEditDialog(
         val textFields = locationTextFields[locationIndex]!!
 
         val translationsPanel = JPanel(GridBagLayout())
-        translationsPanel.border = JBUI.Borders.empty(8)
+        translationsPanel.border = JBUI.Borders.empty(12)
         val rowGbc = GridBagConstraints()
         var row = 0
 
-        // File path info
+        // Compact header info panel
         rowGbc.apply {
             gridx = 0
             gridy = row++
             gridwidth = 3
             fill = GridBagConstraints.HORIZONTAL
-            insets = JBUI.insets(0, 0, 8, 0)
+            insets = JBUI.insets(0, 0, 12, 0)
             weightx = 1.0
         }
-        val pathLabel = JBLabel("Path: ${location.fullPath}")
-        pathLabel.font = pathLabel.font.deriveFont(Font.PLAIN, pathLabel.font.size - 1f)
-        pathLabel.foreground = JBColor.GRAY
-        translationsPanel.add(pathLabel, rowGbc)
 
-        // Key in file info (if different from display key)
+        val headerPanel = JPanel(GridBagLayout())
+        headerPanel.background = JBColor(Color(245, 245, 250), Color(45, 45, 50))
+        headerPanel.border = JBUI.Borders.empty(8, 10)
+
+        val headerGbc = GridBagConstraints().apply {
+            gridx = 0
+            gridy = 0
+            anchor = GridBagConstraints.WEST
+            fill = GridBagConstraints.HORIZONTAL
+            weightx = 1.0
+        }
+
+        val pathLabel = JBLabel("<html><font color='gray'>Path:</font> ${location.fullPath}</html>")
+        pathLabel.font = pathLabel.font.deriveFont(pathLabel.font.size - 1f)
+        headerPanel.add(pathLabel, headerGbc)
+
         if (location.keyInFile != translationKey) {
-            rowGbc.gridy = row++
-            val keyInFileLabel = JBLabel("Key in file: ${location.keyInFile}")
-            keyInFileLabel.font = keyInFileLabel.font.deriveFont(Font.PLAIN, keyInFileLabel.font.size - 1f)
-            keyInFileLabel.foreground = JBColor.GRAY
-            translationsPanel.add(keyInFileLabel, rowGbc)
+            headerGbc.gridy = 1
+            headerGbc.insets = JBUI.insetsTop(2)
+            val keyLabel = JBLabel("<html><font color='gray'>Key in file:</font> ${location.keyInFile}</html>")
+            keyLabel.font = keyLabel.font.deriveFont(keyLabel.font.size - 1f)
+            headerPanel.add(keyLabel, headerGbc)
         }
 
-        // New key indicator
         if (location.isNewKey) {
-            rowGbc.gridy = row++
-            val newKeyLabel = JBLabel("This key doesn't exist yet. Fill in values to create it.")
-            newKeyLabel.foreground = JBColor(Color(80, 140, 80), Color(120, 180, 120))
-            newKeyLabel.font = newKeyLabel.font.deriveFont(Font.ITALIC)
-            translationsPanel.add(newKeyLabel, rowGbc)
+            headerGbc.gridy = if (location.keyInFile != translationKey) 2 else 1
+            headerGbc.insets = JBUI.insetsTop(4)
+            val newLabel = JBLabel("New key - fill in values to create")
+            newLabel.foreground = JBColor(Color(80, 140, 80), Color(120, 180, 120))
+            newLabel.font = newLabel.font.deriveFont(Font.ITALIC, newLabel.font.size - 1f)
+            headerPanel.add(newLabel, headerGbc)
         }
 
-        // Add separator
+        translationsPanel.add(headerPanel, rowGbc)
+
+        // English row with prominent styling
         rowGbc.apply {
             gridy = row++
-            insets = JBUI.insets(8, 0, 8, 0)
+            insets = JBUI.insets(0, 0, 4, 0)
         }
-        translationsPanel.add(JSeparator(), rowGbc)
+        addLanguageRow(translationsPanel, "en", true, rowGbc, row - 1, translations, textFields, location)
 
-        // Add English first (source for translations)
-        addLanguageRow(translationsPanel, "en", true, rowGbc, row++, translations, textFields, location)
-
-        // Add separator
+        // Translate All button - right aligned after English
         rowGbc.apply {
             gridy = row++
-            insets = JBUI.insets(12, 0, 8, 0)
-        }
-        translationsPanel.add(JSeparator(), rowGbc)
-
-        // Add "Translate All" button row
-        rowGbc.apply {
-            gridy = row++
-            insets = JBUI.insets(0, 0, 12, 0)
+            insets = JBUI.insets(4, 0, 16, 0)
+            anchor = GridBagConstraints.EAST
         }
         val translateAllButton = JButton("Translate All from English")
         translateAllButton.toolTipText = "Auto-translate empty fields using Google Translate"
         translateAllButton.addActionListener { translateAllFromEnglish(textFields, translations) }
-        val translateAllPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
+        val translateAllPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
         translateAllPanel.add(translateAllButton)
         translationsPanel.add(translateAllPanel, rowGbc)
 
@@ -669,7 +673,7 @@ class TranslocoEditDialog(
         val entry = translations[lang]
         val langName = LANGUAGE_NAMES[lang] ?: lang.uppercase()
 
-        // Column 0: Language label
+        // Column 0: Language label - clean and simple
         gbc.apply {
             gridx = 0
             gridy = row
@@ -678,44 +682,27 @@ class TranslocoEditDialog(
             weighty = 0.0
             fill = GridBagConstraints.NONE
             anchor = GridBagConstraints.WEST
-            insets = JBUI.insets(2, 0, 2, 8)
+            insets = JBUI.insets(4, 0, 4, 12)
         }
 
-        val labelPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
         val label = JBLabel("$langName ($lang)")
-        label.preferredSize = Dimension(JBUI.scale(110), JBUI.scale(24))
+        label.preferredSize = Dimension(JBUI.scale(120), JBUI.scale(26))
         if (isSource) {
             label.font = label.font.deriveFont(Font.BOLD)
         }
-        labelPanel.add(label)
-
-        // Status indicator (inline with label)
-        if (entry?.exists == true) {
-            val existsLabel = JBLabel("✓")
-            existsLabel.foreground = JBColor(Color(60, 150, 60), Color(100, 200, 100))
-            existsLabel.toolTipText = "Key exists in this language file"
-            labelPanel.add(existsLabel)
-        } else if (entry?.file != null) {
-            val newLabel = JBLabel("new")
-            newLabel.font = newLabel.font.deriveFont(Font.ITALIC, newLabel.font.size - 1f)
-            newLabel.foreground = JBColor(Color(180, 130, 40), Color(220, 180, 80))
-            newLabel.toolTipText = "Key will be created when you save"
-            labelPanel.add(newLabel)
-        }
-
-        panel.add(labelPanel, gbc)
+        panel.add(label, gbc)
 
         // Column 1: Text field
         gbc.apply {
             gridx = 1
             weightx = 1.0
             fill = GridBagConstraints.HORIZONTAL
-            insets = JBUI.insets(2, 0, 2, 8)
+            insets = JBUI.insets(4, 0, 4, 8)
         }
         val textField = JBTextField(entry?.value ?: "")
-        textField.preferredSize = Dimension(JBUI.scale(350), JBUI.scale(28))
+        textField.preferredSize = Dimension(JBUI.scale(400), JBUI.scale(30))
         if (isSource) {
-            textField.toolTipText = "Source text (English) - other languages translate from this"
+            textField.toolTipText = "Source text (English)"
         }
         textFields[lang] = textField
         panel.add(textField, gbc)
@@ -725,20 +712,18 @@ class TranslocoEditDialog(
             gridx = 2
             weightx = 0.0
             fill = GridBagConstraints.NONE
-            insets = JBUI.insets(2, 0, 2, 0)
+            insets = JBUI.insets(4, 0, 4, 0)
         }
 
         if (!isSource) {
             val translateBtn = JButton("Translate")
-            translateBtn.preferredSize = Dimension(JBUI.scale(85), JBUI.scale(26))
-            translateBtn.toolTipText = "Translate from English using Google Translate"
+            translateBtn.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(28))
+            translateBtn.toolTipText = "Translate from English"
             translateBtn.addActionListener { translateSingleLanguage(lang, textFields) }
             panel.add(translateBtn, gbc)
         } else {
-            // Add placeholder for alignment
-            val placeholder = JPanel()
-            placeholder.preferredSize = Dimension(JBUI.scale(85), JBUI.scale(26))
-            panel.add(placeholder, gbc)
+            // Placeholder for alignment
+            panel.add(Box.createHorizontalStrut(JBUI.scale(90)), gbc)
         }
     }
 

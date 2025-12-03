@@ -2,7 +2,6 @@ package com.baileyble.translocooverlay
 
 import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
-import com.intellij.codeInsight.documentation.DocumentationManagerProtocol
 import com.intellij.json.psi.JsonFile
 import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.openapi.diagnostic.Logger
@@ -296,53 +295,25 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
     private fun buildDocumentation(key: String, translations: Map<String, String>): String {
         val sb = StringBuilder()
 
-        sb.append("""
-            <html>
-            <head>
-                <style>
-                    body { font-family: sans-serif; margin: 0; padding: 8px; }
-                    .key-section { margin-bottom: 12px; }
-                    .key-label { color: #808080; font-size: 11px; margin-bottom: 2px; }
-                    .key-value { font-family: monospace; color: #6897BB; font-size: 12px; word-break: break-all; }
-                    .translations { margin-top: 8px; }
-                    .translation-row { display: flex; margin: 4px 0; align-items: baseline; }
-                    .lang-code { font-weight: bold; min-width: 30px; color: #808080; }
-                    .translation-value { color: #6A8759; margin-left: 8px; }
-                    .actions { margin-top: 12px; padding-top: 8px; border-top: 1px solid #404040; }
-                    .action-link { color: #589DF6; text-decoration: none; font-size: 11px; }
-                </style>
-            </head>
-            <body>
-        """.trimIndent())
+        sb.append("<html><body>")
 
         // Key section
-        sb.append("""
-            <div class="key-section">
-                <div class="key-label">Translation Key:</div>
-                <div class="key-value">${escapeHtml(key)}</div>
-            </div>
-        """.trimIndent())
+        sb.append("<p><b>Key:</b> <code>${escapeHtml(key)}</code></p>")
 
-        // Translations
-        sb.append("<div class='translations'>")
+        // Translations table
+        sb.append("<table cellpadding='2' cellspacing='0'>")
         for ((lang, value) in translations.entries.sortedBy { it.key }) {
-            sb.append("""
-                <div class="translation-row">
-                    <span class="lang-code">${lang.uppercase()}</span>
-                    <span class="translation-value">"${escapeHtml(value)}"</span>
-                </div>
-            """.trimIndent())
+            val truncatedValue = if (value.length > 60) value.take(57) + "..." else value
+            sb.append("<tr>")
+            sb.append("<td><b>${lang.uppercase()}</b></td>")
+            sb.append("<td>&nbsp;</td>")
+            sb.append("<td><font color='#6A8759'>\"${escapeHtml(truncatedValue)}\"</font></td>")
+            sb.append("</tr>")
         }
-        sb.append("</div>")
+        sb.append("</table>")
 
-        // Actions section with link - using PSI_ELEMENT protocol for navigation
-        sb.append("""
-            <div class="actions">
-                <a href="${DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL}edit" class="action-link">✏️ Edit</a>
-                &nbsp;&nbsp;
-                <span style="color: #808080; font-size: 10px;">Jump to Source: F4</span>
-            </div>
-        """.trimIndent())
+        // Hint
+        sb.append("<p><font size='-2' color='gray'>Ctrl+Shift+Click to edit | F4 to jump to source</font></p>")
 
         sb.append("</body></html>")
 

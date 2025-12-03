@@ -10,6 +10,8 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.ui.MessageType
+import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
@@ -423,8 +425,8 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         if (keyPath.isBlank()) return null
 
         // Determine if this is a scoped file
-        val file = element.containingFile?.virtualFile ?: return null
-        val scopePrefix = getScopeFromFilePath(file.path)
+        val sourceFile = element.containingFile?.virtualFile ?: return null
+        val scopePrefix = getScopeFromFilePath(sourceFile.path)
 
         LOG.debug("TRANSLOCO-USAGES: Looking for usages of key '$keyPath' (scope: $scopePrefix)")
 
@@ -441,6 +443,9 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         val htmlFiles = FilenameIndex.getAllFilesByExt(project, "html", GlobalSearchScope.projectScope(project))
 
         for (htmlFile in htmlFiles) {
+            // Skip JSON files (shouldn't happen but be safe)
+            if (htmlFile.path == sourceFile.path) continue
+
             val psiFile = PsiManager.getInstance(project).findFile(htmlFile) ?: continue
             val text = psiFile.text
 
@@ -456,6 +461,9 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         // Also search TypeScript files for service usage
         val tsFiles = FilenameIndex.getAllFilesByExt(project, "ts", GlobalSearchScope.projectScope(project))
         for (tsFile in tsFiles) {
+            // Skip the source file
+            if (tsFile.path == sourceFile.path) continue
+
             val psiFile = PsiManager.getInstance(project).findFile(tsFile) ?: continue
             val text = psiFile.text
 
@@ -470,7 +478,11 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
         LOG.debug("TRANSLOCO-USAGES: Found ${usageInfos.size} usages for key '$keyPath'")
 
-        if (usageInfos.isEmpty()) return null
+        if (usageInfos.isEmpty()) {
+            // Show "no usages found" balloon and return empty to prevent default handling
+            showNoUsagesMessage(project, keyPath)
+            return emptyArray()
+        }
 
         // If only one usage, navigate directly
         if (usageInfos.size == 1) {
@@ -482,6 +494,20 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
         // Return empty array to indicate we handled this (prevents IntelliJ's default popup)
         return emptyArray()
+    }
+
+    /**
+     * Show a balloon message when no usages are found.
+     */
+    private fun showNoUsagesMessage(project: com.intellij.openapi.project.Project, keyPath: String) {
+        ApplicationManager.getApplication().invokeLater {
+            val statusBar = com.intellij.openapi.wm.WindowManager.getInstance().getStatusBar(project)
+            JBPopupFactory.getInstance()
+                .createHtmlTextBalloonBuilder("No usages found for '$keyPath'", MessageType.INFO, null)
+                .setFadeoutTime(3000)
+                .createBalloon()
+                .show(com.intellij.ui.awt.RelativePoint.getCenterOf(statusBar.component), Balloon.Position.atRight)
+        }
     }
 
     /**

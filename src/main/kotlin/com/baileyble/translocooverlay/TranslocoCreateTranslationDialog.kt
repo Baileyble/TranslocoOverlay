@@ -2,6 +2,7 @@ package com.baileyble.translocooverlay
 
 import com.baileyble.translocooverlay.util.JsonKeyNavigator
 import com.baileyble.translocooverlay.util.TranslationFileFinder
+import com.baileyble.translocooverlay.util.TranslocoScopeDetector
 import com.intellij.json.psi.JsonElementGenerator
 import com.intellij.json.psi.JsonFile
 import com.intellij.json.psi.JsonObject
@@ -154,11 +155,18 @@ class TranslocoCreateTranslationDialog(
     private lateinit var paramsPanel: JPanel
     private var textWithoutParams: String = ""
 
+    // Component scope detection (from TRANSLOCO_SCOPE provider)
+    private var detectedComponentScope: TranslocoScopeDetector.ScopeDetectionResult =
+        TranslocoScopeDetector.ScopeDetectionResult.NOT_FOUND
+
     init {
         title = "Create Translation"
 
         // Detect directive context before initializing UI
         detectDirectiveContext()
+
+        // Detect component scope from TRANSLOCO_SCOPE provider
+        detectComponentScope()
 
         // Detect parameters in selected text
         detectParameters()
@@ -167,6 +175,22 @@ class TranslocoCreateTranslationDialog(
 
         // Find available locations
         findAvailableLocations()
+    }
+
+    /**
+     * Detect the TRANSLOCO_SCOPE provider in the associated component file.
+     */
+    private fun detectComponentScope() {
+        val document = editor.document
+        val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document) ?: return
+        val virtualFile = psiFile.virtualFile ?: return
+
+        if (virtualFile.extension == "html") {
+            detectedComponentScope = TranslocoScopeDetector.detectScopeForHtmlFile(project, virtualFile)
+            if (detectedComponentScope.found) {
+                LOG.debug("TRANSLOCO-CREATE: Detected component scope: ${detectedComponentScope.scope}")
+            }
+        }
     }
 
     /**
@@ -771,12 +795,38 @@ class TranslocoCreateTranslationDialog(
                 }
             }
 
-            // Sort with last used first
+            // Filter and sort locations based on detected component scope
+            val detectedScope = detectedComponentScope.scope
             val lastUsed = getLastUsedLocation()
-            availableLocations = locations.sortedWith(compareBy(
-                { it.fullPath != lastUsed },
-                { it.displayPath }
-            ))
+
+            availableLocations = if (detectedScope != null) {
+                // Filter to only locations matching the scope
+                val matchingLocations = locations.filter { location ->
+                    TranslocoScopeDetector.locationMatchesScope(location.fullPath, detectedScope)
+                }
+
+                if (matchingLocations.isNotEmpty()) {
+                    // Use only matching locations, sorted by last used
+                    matchingLocations.sortedWith(compareBy(
+                        { it.fullPath != lastUsed },
+                        { it.displayPath }
+                    ))
+                } else {
+                    // No matching locations found, fall back to all locations
+                    // but prioritize any that contain the scope name
+                    locations.sortedWith(compareBy(
+                        { !it.fullPath.lowercase().contains(detectedScope.lowercase()) },
+                        { it.fullPath != lastUsed },
+                        { it.displayPath }
+                    ))
+                }
+            } else {
+                // No scope detected, use standard sorting with last used first
+                locations.sortedWith(compareBy(
+                    { it.fullPath != lastUsed },
+                    { it.displayPath }
+                ))
+            }
 
             // Update UI on EDT
             SwingUtilities.invokeLater {
@@ -787,7 +837,12 @@ class TranslocoCreateTranslationDialog(
 
     private fun updateLocationUI() {
         if (availableLocations.isEmpty()) {
-            locationLabel.text = "No translation files found"
+            val detectedScope = detectedComponentScope.scope
+            if (detectedScope != null) {
+                locationLabel.text = "No translation files found for scope '$detectedScope'"
+            } else {
+                locationLabel.text = "No translation files found"
+            }
             locationLabel.foreground = JBColor.RED
             locationButton.isEnabled = false
             return
@@ -804,9 +859,21 @@ class TranslocoCreateTranslationDialog(
 
     private fun updateLocationLabel() {
         selectedLocation?.let {
-            locationLabel.text = it.displayPath
+            val detectedScope = detectedComponentScope.scope
+            val scopeIndicator = if (detectedScope != null) " (scope: $detectedScope)" else ""
+            locationLabel.text = it.displayPath + scopeIndicator
             locationLabel.foreground = JBColor(Color(0, 102, 153), Color(102, 178, 255))
-            locationLabel.toolTipText = it.fullPath
+
+            val tooltipText = buildString {
+                append(it.fullPath)
+                if (detectedScope != null) {
+                    append("\n\nAuto-detected from TRANSLOCO_SCOPE provider")
+                    detectedComponentScope.componentFile?.let { componentFile ->
+                        append("\nComponent: ${componentFile.name}")
+                    }
+                }
+            }
+            locationLabel.toolTipText = tooltipText
         }
     }
 

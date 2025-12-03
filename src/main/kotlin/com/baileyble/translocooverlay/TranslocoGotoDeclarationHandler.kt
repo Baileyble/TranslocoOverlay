@@ -480,8 +480,8 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         // Show custom popup with file context
         showUsagesPopup(project, keyPath, usageInfos)
 
-        // Return null so IntelliJ doesn't show its default popup
-        return null
+        // Return empty array to indicate we handled this (prevents IntelliJ's default popup)
+        return emptyArray()
     }
 
     /**

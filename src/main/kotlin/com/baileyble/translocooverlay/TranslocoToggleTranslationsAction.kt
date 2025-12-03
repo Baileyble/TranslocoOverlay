@@ -1,7 +1,6 @@
 package com.baileyble.translocooverlay
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
-import com.intellij.codeInsight.hints.declarative.DeclarativeInlayHintsPassFactory
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -71,14 +70,6 @@ class TranslocoToggleTranslationsAction : AnAction() {
         ApplicationManager.getApplication().invokeLater({
             // Restart daemon analyzer to trigger re-collection of hints
             DaemonCodeAnalyzer.getInstance(project).restart(psiFile)
-
-            // Also try to restart declarative inlay hints specifically
-            try {
-                @Suppress("UnstableApiUsage")
-                DeclarativeInlayHintsPassFactory.Companion.resetModificationStamp()
-            } catch (ex: Exception) {
-                LOG.debug("Could not reset declarative hints: ${ex.message}")
-            }
 
             // Force repaint of all editors showing this file
             val virtualFile = psiFile.virtualFile

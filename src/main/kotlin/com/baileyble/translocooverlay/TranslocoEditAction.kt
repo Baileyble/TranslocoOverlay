@@ -67,53 +67,69 @@ object TranslocoEditUtil {
         var keyInFile = key
         var foundAny = false
 
-        // Try main translation files first
-        val mainFiles = TranslationFileFinder.findTranslationFiles(project)
-        for (file in mainFiles) {
-            val lang = file.nameWithoutExtension
-            val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
-            val value = JsonKeyNavigator.getStringValue(psiFile, key)
+        LOG.warn("TRANSLOCO-EDIT: Finding translations for key '$key'")
 
-            if (value != null) {
-                translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
-                foundAny = true
-            } else {
-                // File exists but key doesn't - can create
-                translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
-            }
-        }
+        // Strategy 1: Try scoped resolution FIRST (for Nx monorepo patterns)
+        val keyParts = key.split(".")
+        if (keyParts.size >= 2) {
+            val potentialScope = keyParts[0]
+            val keyWithoutScope = keyParts.drop(1).joinToString(".")
 
-        // If not found in main files, try scoped resolution
-        if (!foundAny) {
-            val keyParts = key.split(".")
-            if (keyParts.size >= 2) {
-                val potentialScope = keyParts[0]
-                val keyWithoutScope = keyParts.drop(1).joinToString(".")
+            LOG.warn("TRANSLOCO-EDIT: Trying scoped resolution: scope='$potentialScope', key='$keyWithoutScope'")
 
-                val scopedFiles = TranslationFileFinder.findScopedTranslationFiles(project, potentialScope)
-                for (file in scopedFiles) {
-                    val lang = file.nameWithoutExtension
-                    val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
-                    val value = JsonKeyNavigator.getStringValue(psiFile, keyWithoutScope)
+            val scopedFiles = TranslationFileFinder.findScopedTranslationFiles(project, potentialScope)
+            LOG.warn("TRANSLOCO-EDIT: Found ${scopedFiles.size} scoped files for '$potentialScope'")
 
-                    if (value != null) {
-                        translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
-                        keyInFile = keyWithoutScope
-                        foundAny = true
-                    } else {
-                        translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
-                        keyInFile = keyWithoutScope
-                    }
+            for (file in scopedFiles) {
+                val lang = file.nameWithoutExtension
+                LOG.warn("TRANSLOCO-EDIT: Checking scoped file: ${file.path}")
+
+                val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
+                val value = JsonKeyNavigator.getStringValue(psiFile, keyWithoutScope)
+
+                LOG.warn("TRANSLOCO-EDIT: Value for '$keyWithoutScope' in $lang: ${value?.take(50) ?: "null"}")
+
+                if (value != null) {
+                    translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
+                    keyInFile = keyWithoutScope
+                    foundAny = true
+                } else {
+                    translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
+                    keyInFile = keyWithoutScope
                 }
             }
         }
 
-        // Also try all translation files for a broader search
+        // Strategy 2: Try main translation files with full key
         if (!foundAny) {
+            val mainFiles = TranslationFileFinder.findTranslationFiles(project)
+            LOG.warn("TRANSLOCO-EDIT: Trying ${mainFiles.size} main translation files")
+
+            for (file in mainFiles) {
+                val lang = file.nameWithoutExtension
+                val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
+                val value = JsonKeyNavigator.getStringValue(psiFile, key)
+
+                LOG.warn("TRANSLOCO-EDIT: Value for '$key' in ${file.name}: ${value?.take(50) ?: "null"}")
+
+                if (value != null) {
+                    translations[lang] = TranslocoEditDialog.TranslationEntry(value, file, true)
+                    foundAny = true
+                } else if (!translations.containsKey(lang)) {
+                    // Only add empty entry if we don't already have an entry for this lang
+                    translations[lang] = TranslocoEditDialog.TranslationEntry("", file, false)
+                }
+            }
+        }
+
+        // Strategy 3: Try all translation files for a broader search
+        if (!foundAny) {
+            LOG.warn("TRANSLOCO-EDIT: Trying broader search in all translation files")
             val allFiles = TranslationFileFinder.findAllTranslationFiles(project)
+
             for (file in allFiles) {
                 val lang = file.nameWithoutExtension
-                if (translations.containsKey(lang)) continue
+                if (translations.containsKey(lang) && translations[lang]?.exists == true) continue
 
                 val psiFile = PsiManager.getInstance(project).findFile(file) as? JsonFile ?: continue
                 val value = JsonKeyNavigator.getStringValue(psiFile, key)
@@ -124,6 +140,8 @@ object TranslocoEditUtil {
                 }
             }
         }
+
+        LOG.warn("TRANSLOCO-EDIT: Final result - foundAny=$foundAny, translations=${translations.keys}, keyInFile='$keyInFile'")
 
         return Triple(translations, keyInFile, !foundAny)
     }

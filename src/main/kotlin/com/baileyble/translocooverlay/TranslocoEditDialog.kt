@@ -20,7 +20,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
-import com.intellij.ui.components.JBTextField
+import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.*
 import java.io.BufferedReader
@@ -95,8 +95,8 @@ class TranslocoEditDialog(
         val exists: Boolean
     )
 
-    // Text fields per location index and language
-    private val locationTextFields = mutableMapOf<Int, MutableMap<String, JBTextField>>()
+    // Text areas per location index and language (using JBTextArea for multi-line support)
+    private val locationTextFields = mutableMapOf<Int, MutableMap<String, JBTextArea>>()
     private lateinit var tabbedPane: JBTabbedPane
     private lateinit var mainPanel: JPanel
     private var contentPanel: JComponent? = null
@@ -675,7 +675,7 @@ class TranslocoEditDialog(
         gbc: GridBagConstraints,
         row: Int,
         translations: MutableMap<String, TranslationEntry>,
-        textFields: MutableMap<String, JBTextField>,
+        textFields: MutableMap<String, JBTextArea>,
         location: TranslationLocation
     ) {
         val entry = translations[lang]
@@ -689,8 +689,8 @@ class TranslocoEditDialog(
             weightx = 0.0
             weighty = 0.0
             fill = GridBagConstraints.NONE
-            anchor = GridBagConstraints.WEST
-            insets = JBUI.insets(4, 0, 4, 12)
+            anchor = GridBagConstraints.NORTHWEST
+            insets = JBUI.insets(8, 0, 4, 12)
         }
 
         val label = JBLabel("$langName ($lang)")
@@ -700,26 +700,36 @@ class TranslocoEditDialog(
         }
         panel.add(label, gbc)
 
-        // Column 1: Text field
+        // Column 1: Text area with scroll pane for multi-line support
         gbc.apply {
             gridx = 1
             weightx = 1.0
-            fill = GridBagConstraints.HORIZONTAL
+            fill = GridBagConstraints.BOTH
             insets = JBUI.insets(4, 0, 4, 8)
         }
-        val textField = JBTextField(entry?.value ?: "")
-        textField.preferredSize = Dimension(JBUI.scale(400), JBUI.scale(30))
+        val textArea = JBTextArea(entry?.value ?: "")
+        textArea.lineWrap = true
+        textArea.wrapStyleWord = true
+        textArea.rows = 3
         if (isSource) {
-            textField.toolTipText = "Source text (English)"
+            textArea.toolTipText = "Source text (English)"
         }
-        textFields[lang] = textField
-        panel.add(textField, gbc)
+        textFields[lang] = textArea
+
+        // Wrap in scroll pane for scrolling long content
+        val textScrollPane = JBScrollPane(textArea)
+        textScrollPane.preferredSize = Dimension(JBUI.scale(400), JBUI.scale(60))
+        textScrollPane.minimumSize = Dimension(JBUI.scale(200), JBUI.scale(60))
+        textScrollPane.verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+        textScrollPane.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        panel.add(textScrollPane, gbc)
 
         // Column 2: Translate button (for non-English)
         gbc.apply {
             gridx = 2
             weightx = 0.0
             fill = GridBagConstraints.NONE
+            anchor = GridBagConstraints.NORTHWEST
             insets = JBUI.insets(4, 0, 4, 0)
         }
 
@@ -735,7 +745,7 @@ class TranslocoEditDialog(
         }
     }
 
-    private fun translateSingleLanguage(targetLang: String, textFields: MutableMap<String, JBTextField>) {
+    private fun translateSingleLanguage(targetLang: String, textFields: MutableMap<String, JBTextArea>) {
         val englishText = textFields["en"]?.text ?: return
         if (englishText.isBlank()) {
             Messages.showWarningDialog(project, "Please enter English text first.", "No Source Text")
@@ -750,7 +760,7 @@ class TranslocoEditDialog(
     }
 
     private fun translateAllFromEnglish(
-        textFields: MutableMap<String, JBTextField>,
+        textFields: MutableMap<String, JBTextArea>,
         translations: MutableMap<String, TranslationEntry>
     ) {
         val englishText = textFields["en"]?.text ?: return
@@ -759,11 +769,11 @@ class TranslocoEditDialog(
             return
         }
 
-        for ((lang, textField) in textFields) {
-            if (lang != "en" && (textField.text.isBlank() || textField.text == translations[lang]?.value)) {
+        for ((lang, textArea) in textFields) {
+            if (lang != "en" && (textArea.text.isBlank() || textArea.text == translations[lang]?.value)) {
                 translateWithGoogle(englishText, lang) { translatedText ->
                     SwingUtilities.invokeLater {
-                        textField.text = translatedText
+                        textArea.text = translatedText
                     }
                 }
             }

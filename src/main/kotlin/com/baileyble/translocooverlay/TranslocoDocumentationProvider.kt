@@ -300,19 +300,18 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
     private fun buildDocumentation(key: String, translations: Map<String, String>): String {
         val sb = StringBuilder()
 
-        sb.append("<html><body>")
+        sb.append("<html><body style='max-width: 500px;'>")
 
-        // Key section
-        sb.append("<p><b>Key:</b> <code>${escapeHtml(key)}</code></p>")
+        // Key section with word wrap
+        sb.append("<p style='word-wrap: break-word;'><b>Key:</b> <code>${escapeHtml(key)}</code></p>")
 
-        // Translations table
-        sb.append("<table cellpadding='2' cellspacing='0'>")
+        // Translations table with word wrapping for long text
+        sb.append("<table cellpadding='2' cellspacing='0' style='width: 100%;'>")
         for ((lang, value) in translations.entries.sortedBy { it.key }) {
-            val truncatedValue = if (value.length > 60) value.take(57) + "..." else value
             sb.append("<tr>")
-            sb.append("<td><b>${lang.uppercase()}</b></td>")
+            sb.append("<td style='vertical-align: top; white-space: nowrap;'><b>${lang.uppercase()}</b></td>")
             sb.append("<td>&nbsp;</td>")
-            sb.append("<td><font color='#6A8759'>\"${escapeHtml(truncatedValue)}\"</font></td>")
+            sb.append("<td style='word-wrap: break-word; word-break: break-word;'><font color='#6A8759'>\"${escapeHtml(value)}\"</font></td>")
             sb.append("</tr>")
         }
         sb.append("</table>")

@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.baileyble"
-version = "2.0.0"
+version = "2.1.1"
 
 repositories {
     mavenCentral()
@@ -35,6 +35,11 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h3>Version 2.1.1 - Bug Fix</h3>
+            <ul>
+                <li><b>FIX: Ctrl+Click false positives</b> - Fixed issue where Ctrl+Click on unrelated elements (like Angular component tags) would incorrectly trigger the Transloco overlay when a transloco key existed elsewhere in the template</li>
+            </ul>
+
             <h3>Version 2.0.0 - Create Translation from Selection</h3>
             <ul>
                 <li><b>NEW: Create Translation Shortcut</b> - Select text in HTML, Ctrl+Shift+Click to create a new translation</li>

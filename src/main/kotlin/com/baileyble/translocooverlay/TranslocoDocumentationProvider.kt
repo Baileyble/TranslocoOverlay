@@ -224,7 +224,12 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
 
         while (current != null && depth < 15) {
             val text = current.text ?: ""
-            if (text.contains("transloco")) {
+            // Only return context if a specific transloco pattern matches
+            if (PIPE_PATTERN.containsMatchIn(text) ||
+                DIRECT_ATTR_PATTERN.containsMatchIn(text) ||
+                BINDING_ATTR_PATTERN.containsMatchIn(text) ||
+                STRUCTURAL_DIRECTIVE_PATTERN.containsMatchIn(text) ||
+                T_FUNCTION_PATTERN.containsMatchIn(text)) {
                 return text
             }
             current = current.parent

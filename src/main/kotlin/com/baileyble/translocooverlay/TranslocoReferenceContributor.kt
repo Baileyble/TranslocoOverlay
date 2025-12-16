@@ -131,8 +131,9 @@ class TranslocoReferenceProvider : PsiReferenceProvider() {
             }
         }
 
-        // Check for transloco in text content
-        if (text.contains("transloco")) {
+        // Check for t() function call with key pattern
+        val tFunctionPattern = Regex("""t\s*\(\s*['"]([^'"]+)['"]""")
+        if (tFunctionPattern.containsMatchIn(text)) {
             return true
         }
 

@@ -220,6 +220,7 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
 
     /**
      * Get the transloco context by looking at parent elements.
+     * Only returns context if a specific transloco pattern is found.
      */
     private fun getTranslocoContext(element: PsiElement): String? {
         var current: PsiElement? = element
@@ -228,8 +229,11 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
         while (current != null && depth < 15) {
             val text = current.text ?: ""
 
-            // Check if this element contains transloco
-            if (text.contains("transloco")) {
+            // Only return context if a specific transloco pattern matches
+            if (PIPE_PATTERN.containsMatchIn(text) ||
+                DIRECT_ATTR_PATTERN.containsMatchIn(text) ||
+                BINDING_ATTR_PATTERN.containsMatchIn(text) ||
+                STRUCTURAL_DIRECTIVE_PATTERN.containsMatchIn(text)) {
                 return text
             }
 

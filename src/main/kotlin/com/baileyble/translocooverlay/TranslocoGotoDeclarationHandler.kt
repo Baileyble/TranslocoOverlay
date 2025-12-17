@@ -87,25 +87,30 @@ class TranslocoGotoDeclarationHandler : GotoDeclarationHandler {
             LOG.debug("TRANSLOCO-GOTO: Detected t() function call")
             LOG.debug("TRANSLOCO-GOTO: Key from t(): '$tFunctionKey'")
 
-            // Look for scope from *transloco directive
-            val scope = findTranslocoScope(sourceElement)
-            val fullKey = if (scope != null) "$scope.$tFunctionKey" else tFunctionKey
+            // Verify the click was actually on the key, not on an unrelated element
+            if (!isClickedOnKey(sourceElement, tFunctionKey)) {
+                LOG.debug("TRANSLOCO-GOTO: Click not on t() key, ignoring")
+            } else {
+                // Look for scope from *transloco directive
+                val scope = findTranslocoScope(sourceElement)
+                val fullKey = if (scope != null) "$scope.$tFunctionKey" else tFunctionKey
 
-            LOG.debug("TRANSLOCO-GOTO: Scope: $scope, Full key: '$fullKey'")
+                LOG.debug("TRANSLOCO-GOTO: Scope: $scope, Full key: '$fullKey'")
 
-            val targets = findTranslationTargets(sourceElement, fullKey)
+                val targets = findTranslationTargets(sourceElement, fullKey)
 
-            // If no results with scope, try without scope
-            if (targets.isEmpty() && scope != null) {
-                LOG.debug("TRANSLOCO-GOTO: No results with scope, trying without")
-                val targetsNoScope = findTranslationTargets(sourceElement, tFunctionKey)
-                if (targetsNoScope.isNotEmpty()) {
-                    return targetsNoScope.toTypedArray()
+                // If no results with scope, try without scope
+                if (targets.isEmpty() && scope != null) {
+                    LOG.debug("TRANSLOCO-GOTO: No results with scope, trying without")
+                    val targetsNoScope = findTranslationTargets(sourceElement, tFunctionKey)
+                    if (targetsNoScope.isNotEmpty()) {
+                        return targetsNoScope.toTypedArray()
+                    }
                 }
-            }
 
-            if (targets.isNotEmpty()) {
-                return targets.toTypedArray()
+                if (targets.isNotEmpty()) {
+                    return targets.toTypedArray()
+                }
             }
         }
 

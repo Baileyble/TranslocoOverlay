@@ -143,8 +143,13 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
         // First try t() function pattern
         val tFunctionKey = extractTFunctionKey(element)
         if (tFunctionKey != null) {
-            val scope = findTranslocoScope(element)
-            return if (scope != null) "$scope.$tFunctionKey" else tFunctionKey
+            // Verify the element is actually on/near the key
+            if (!isElementOnKey(element, tFunctionKey)) {
+                // Element is not on the key, skip t() function detection
+            } else {
+                val scope = findTranslocoScope(element)
+                return if (scope != null) "$scope.$tFunctionKey" else tFunctionKey
+            }
         }
 
         // Try other patterns by looking at parent context
@@ -190,6 +195,28 @@ class TranslocoDocumentationProvider : AbstractDocumentationProvider() {
         }
 
         return null
+    }
+
+    /**
+     * Check if the element is on or near the translation key.
+     */
+    private fun isElementOnKey(element: PsiElement, key: String): Boolean {
+        val keyParts = key.split(".")
+        val lastPart = keyParts.lastOrNull() ?: key
+
+        var current: PsiElement? = element
+        var depth = 0
+
+        while (current != null && depth < 5) {
+            val text = current.text ?: ""
+            if (text.contains(key) || text.contains(lastPart)) {
+                return true
+            }
+            current = current.parent
+            depth++
+        }
+
+        return false
     }
 
     private fun findTranslocoScope(element: PsiElement): String? {

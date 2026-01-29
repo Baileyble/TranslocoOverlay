@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.baileyble"
-version = "2.1.1"
+version = "2.2.0"
 
 repositories {
     mavenCentral()
@@ -18,8 +18,8 @@ repositories {
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     intellijPlatform {
-        // Target WebStorm 2025.2 (build 252 - available in repositories)
-        create("WS", "2025.2")
+        // Target WebStorm 2026.1 (build 261) for 2026 compatibility
+        create("WS", "2026.1")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // JavaScript/Angular support is bundled in WebStorm
@@ -30,11 +30,17 @@ dependencies {
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "252"
+            sinceBuild = "261"
             untilBuild = provider { null }  // No upper limit
         }
 
         changeNotes = """
+            <h3>Version 2.2.0 - IntelliJ 2026 Support</h3>
+            <ul>
+                <li><b>NEW: IntelliJ 2026 Compatibility</b> - Updated plugin to support IntelliJ 2026.1 and later versions</li>
+                <li><b>NOTE:</b> This version requires IntelliJ 2026.1+. For IntelliJ 2025.x, please use version 2.1.1</li>
+            </ul>
+
             <h3>Version 2.1.1 - Bug Fix</h3>
             <ul>
                 <li><b>FIX: Ctrl+Click false positives</b> - Fixed issue where Ctrl+Click on unrelated elements (like Angular component tags) would incorrectly trigger the Transloco overlay when a transloco key existed elsewhere in the template</li>
